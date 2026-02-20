@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b74de" />
+    <title>Trip Expense Tracker</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/icon-192.png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <h1>Trip Expense Tracker</h1>
+
+    <!-- Trip selector -->
+    <div class="trip-bar">
+        <label for="tripSelector"><strong>Trip:</strong></label>
+        <select id="tripSelector"></select>
+        <button id="newTripBtn" type="button">+ New Trip</button>
+        <button id="renameTripBtn" type="button">Rename</button>
+        <button id="deleteTripBtn" type="button" class="danger-btn">Delete Trip</button>
+    </div>
+
+    <!-- Tab navigation -->
+    <nav class="tab-nav">
+        <button class="tab-btn active" data-page="expense">Add Expense</button>
+        <button class="tab-btn" data-page="summary">Summary</button>
+        <button class="tab-btn" data-page="settings">Settings</button>
+    </nav>
+
+    <!-- ==================== PAGE: Add Expense ==================== -->
+    <section id="page-expense" class="page active">
+        <div class="box">
+            <h2>Add Expense</h2>
+            <form id="expenseForm">
+                <div>
+                    <label>Date</label>
+                    <input id="date" type="date" required />
+                </div>
+                <div>
+                    <label>Currency</label>
+                    <input id="currency" required />
+                </div>
+                <div>
+                    <label>Method</label>
+                    <select id="method">
+                        <option value="credit">Credit</option>
+                        <option value="cash">Cash</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Category</label>
+                    <select id="category"></select>
+                </div>
+                <div>
+                    <label>Amount (local)</label>
+                    <input id="amount" type="number" step="0.01" required />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                    <label>Description</label>
+                    <textarea id="description" rows="2" placeholder="Optional"></textarea>
+                </div>
+                <div><button>Add Expense</button></div>
+            </form>
+        </div>
+    </section>
+
+    <!-- ==================== PAGE: Summary ==================== -->
+    <section id="page-summary" class="page">
+        <div class="box">
+            <h2>Filters &amp; Summary</h2>
+            <form id="filterForm">
+                <div>
+                    <label>Start date</label>
+                    <input id="startDate" type="date" />
+                </div>
+                <div>
+                    <label>End date</label>
+                    <input id="endDate" type="date" />
+                </div>
+                <div>
+                    <label>Show in currency</label>
+                    <input id="summaryCurrency" placeholder="CAD" style="width:120px" />
+                </div>
+                <div class="flex">
+                    <button type="submit">Apply</button>
+                    <button type="button" id="resetFilters">Reset</button>
+                </div>
+            </form>
+            <div class="flex" style="margin-top:.5rem;">
+                <strong>Total:</strong>
+                <span id="summaryOutput"></span>
+            </div>
+        </div>
+
+        <div class="box">
+            <h2>Expenses</h2>
+            <div class="muted" style="margin-bottom:.5rem;">
+                FX source: 🌐 Frankfurter &nbsp; 💵 Cash Batch
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Category</th>
+                            <th>Method</th>
+                            <th>Local Amount</th>
+                            <th>FX Rate</th>
+                            <th>Home Amount</th>
+                            <th>Description</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="expensesTbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="box">
+            <h2>By Category</h2>
+            <table class="table">
+                <thead>
+                    <tr><th>Category</th><th>Count</th><th>Total (display currency)</th></tr>
+                </thead>
+                <tbody id="categorySummaryBody"></tbody>
+                <tfoot>
+                    <tr><td>All Categories</td><td id="catTotalCount">0</td><td id="catGrandTotal">0</td></tr>
+                </tfoot>
+            </table>
+            <div class="muted">Category totals respect your date range and display currency.</div>
+        </div>
+    </section>
+
+    <!-- ==================== PAGE: Settings ==================== -->
+    <section id="page-settings" class="page">
+        <div class="box">
+            <h2>Settings</h2>
+            <form id="settingsForm">
+                <div>
+                    <label>Home currency (base)</label>
+                    <input id="homeCurrency" placeholder="CAD" required />
+                </div>
+                <div>
+                    <label>Trip currency (local)</label>
+                    <input id="tripCurrency" placeholder="EUR" required />
+                </div>
+                <div>
+                    <label>Credit card fee (%)</label>
+                    <input id="ccFee" type="number" step="0.1" min="0" value="2.5" required />
+                </div>
+                <div><button type="submit">Save</button></div>
+            </form>
+            <div class="muted">Tip: Home currency is your base (e.g., CAD). Trip currency is the local currency (e.g., EUR).</div>
+        </div>
+
+        <div class="row">
+            <div class="box">
+                <h2>Categories</h2>
+                <div class="flex" style="margin-bottom:.5rem;">
+                    <input id="newCategoryName" placeholder="e.g., Meals" />
+                    <button id="addCategory" type="button">+ Add category</button>
+                </div>
+                <table class="table">
+                    <thead><tr><th>Name</th><th>Used</th><th>Actions</th></tr></thead>
+                    <tbody id="categoriesTbody"></tbody>
+                </table>
+                <div class="muted">Delete will be blocked if a category is used. You can reassign its expenses to another category, then delete.</div>
+            </div>
+        </div>
+
+        <div class="box">
+            <h2>Cash Batches</h2>
+            <form id="cashForm">
+                <div>
+                    <label>Date bought</label>
+                    <input id="cashDate" type="date" required />
+                </div>
+                <div>
+                    <label>Currency</label>
+                    <input id="cashCurrency" required />
+                </div>
+                <div>
+                    <label>Rate (1 unit → home)</label>
+                    <input id="cashRate" type="number" step="0.0001" required />
+                </div>
+                <div>
+                    <label>Amount (local)</label>
+                    <input id="cashAmount" type="number" step="0.01" required />
+                </div>
+                <div><button>Add Cash Batch</button></div>
+            </form>
+            <ul id="cashBatchesList"></ul>
+        </div>
+    </section>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

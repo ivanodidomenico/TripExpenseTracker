@@ -1,0 +1,166 @@
+body {
+    font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    margin: 0 auto;
+    max-width: 1000px;
+    padding: 1rem;
+    background: #f7f7f9;
+    color: #111
+}
+
+h1 {
+    margin: 0 0 .5rem
+}
+
+h2 {
+    margin-top: 1.5rem
+}
+
+form {
+    display: grid;
+    gap: .5rem;
+    grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+    align-items: end
+}
+
+    form > div {
+        display: grid;
+        gap: .25rem
+    }
+
+ul {
+    padding-left: 1rem
+}
+
+.row {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit,minmax(300px,1fr))
+}
+
+.box {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 1rem;
+    background: #fff
+}
+
+button {
+    padding: .5rem .75rem;
+    cursor: pointer
+}
+
+input, select, textarea {
+    padding: .4rem
+}
+
+.muted {
+    color: #777;
+    font-size: .92rem
+}
+
+.flex {
+    display: flex;
+    gap: .75rem;
+    align-items: center;
+    flex-wrap: wrap
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse
+}
+
+    .table th, .table td {
+        padding: .5rem;
+        border-bottom: 1px solid #eee;
+        text-align: left
+    }
+
+    .table tfoot td {
+        font-weight: 600
+    }
+
+.badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: #eef;
+    color: #114
+}
+
+.actions button {
+    margin-right: .5rem
+}
+
+/* Trip selector bar */
+.trip-bar {
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    padding: .65rem 1rem;
+    margin-bottom: .75rem;
+    background: #e8f0fe;
+    border: 1px solid #b8d4f8;
+    border-radius: 8px
+}
+
+    .trip-bar select {
+        flex: 1;
+        min-width: 160px;
+        padding: .4rem;
+        font-size: 1rem
+    }
+
+    .trip-bar button {
+        font-size: .88rem
+    }
+
+.danger-btn {
+    color: #b00;
+    border: 1px solid #d88;
+    background: #fff0f0
+}
+
+    .danger-btn:hover {
+        background: #fdd;
+        border-color: #b00
+    }
+
+/* Tab navigation */
+.tab-nav {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid #0b74de;
+    margin-bottom: 1rem
+}
+
+.tab-btn {
+    background: none;
+    border: none;
+    padding: .65rem 1.25rem;
+    font-size: 1rem;
+    color: #555;
+    border-radius: 6px 6px 0 0;
+    transition: background .15s,color .15s
+}
+
+    .tab-btn:hover {
+        background: #e8f0fe;
+        color: #0b74de
+    }
+
+    .tab-btn.active {
+        background: #0b74de;
+        color: #fff;
+        font-weight: 600
+    }
+
+/* Page visibility */
+.page {
+    display: none
+}
+
+    .page.active {
+        display: block
+    }
