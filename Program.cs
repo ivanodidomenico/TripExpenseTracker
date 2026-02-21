@@ -20,7 +20,7 @@ app.UseStaticFiles(new StaticFileOptions
 // Server-side proxy for Frankfurter API (free, no key, supports historical dates).
 // Client calls: GET /api/fx?from=EUR&to=CAD            ? latest rate
 //               GET /api/fx?from=EUR&to=CAD&date=2026-02-11 ? rate on that date
-app.MapGet("./api/fx", async (string from, string to, string? date, IHttpClientFactory httpFactory) =>
+app.MapGet("/api/fx", async (string from, string to, string? date, IHttpClientFactory httpFactory) =>
 {
     from = from.Trim().ToUpperInvariant();
     to = to.Trim().ToUpperInvariant();
