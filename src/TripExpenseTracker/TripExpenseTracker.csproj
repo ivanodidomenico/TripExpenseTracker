@@ -4,4 +4,16 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="app.js" />
+    <Content Include="db.js" />
+    <Content Include="icons\icon-192.png" />
+    <Content Include="icons\icon-512.png" />
+    <Content Include="index.html" />
+    <Content Include="styles.css" />
+    <Content Include="sw.js" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="wwwroot\" />
+  </ItemGroup>
 </Project>
