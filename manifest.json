@@ -1,7 +1,8 @@
 {
   "name": "Trip Expense Tracker",
   "short_name": "TripX",
-  "start_url": ".",
+  "start_url": "/TripExpenseTracker/",
+  "scope": "/TripExpenseTracker/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#0b74de",

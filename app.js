@@ -154,39 +154,23 @@ async function getFxRowAtOrBefore(dateStr) {
 }
 
 // ---------- Frankfurter API: fetch and cache FX rate ----------
+// Always call Frankfurter directly (no server-side proxy)
 async function fetchAndCacheRate(dateStr, currency) {
-    const settings = await get('settings', settingsKey());
-    const to = settings.homeCurrency.toUpperCase();
-    const from = currency.toUpperCase();
-
-    // First try the server-side proxy at /api/fx (works when the .NET backend is running)
     try {
-        const proxyUrl = `/api/fx?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&date=${encodeURIComponent(dateStr)}`;
-        const res = await fetch(proxyUrl);
-        if (res.ok) {
-            const data = await res.json();
-            const rate = data.rate ?? (data.rates && data.rates[to]) ?? null;
-            if (!rate) return null;
-            const effectiveDate = data.date || dateStr;
-            const ppm = rateToPpm(String(rate));
-            await upsertFxRate(effectiveDate, from, ppm);
-            return { ppm, source: data.source || 'frankfurter' };
-        }
-        // If we got a 404 or other non-ok, fall through to direct fetch
-    } catch (err) {
-        // network/CORS/proxy not available — fall through to direct fetch
-    }
-
-    // Fallback: call Frankfurter directly (works on static hosts if Frankfurter allows CORS)
-    try {
+        const settings = await get('settings', settingsKey());
+        const to = settings.homeCurrency.toUpperCase();
+        const from = currency.toUpperCase();
         const datePath = dateStr || 'latest';
         const frankUrl = `https://api.frankfurter.app/${encodeURIComponent(datePath)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-        const res2 = await fetch(frankUrl);
-        if (!res2.ok) return null;
-        const data2 = await res2.json();
-        const rate = (data2.rates && data2.rates[to]) ?? null;
+
+        const res = await fetch(frankUrl);
+        if (!res.ok) return null;
+
+        const data = await res.json();
+        const rate = (data.rates && data.rates[to]) ?? null;
         if (!rate) return null;
-        const effectiveDate = data2.date || dateStr;
+
+        const effectiveDate = data.date || dateStr;
         const ppm = rateToPpm(String(rate));
         await upsertFxRate(effectiveDate, from, ppm);
         return { ppm, source: 'frankfurter' };
