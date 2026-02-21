@@ -159,7 +159,7 @@ async function fetchAndCacheRate(dateStr, currency) {
         const settings = await get('settings', settingsKey());
         const to = settings.homeCurrency.toUpperCase();
         const from = currency.toUpperCase();
-        const res = await fetch(`./api/fx?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&date=${encodeURIComponent(dateStr)}`);
+        const res = await fetch(`https://api.frankfurter.app/api/fx?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&date=${encodeURIComponent(dateStr)}`);
         if (!res.ok) return null;
         const data = await res.json();
         const rate = data.rate;
