@@ -40,7 +40,10 @@
                 </div>
                 <div>
                     <label>Currency</label>
-                    <input id="currency" required />
+                    <select id="currency">
+                        <option value="EUR">EUR</option>
+                        <option value="CAD">CAD</option>
+                    </select>
                 </div>
                 <div>
                     <label>Method</label>
@@ -81,7 +84,11 @@
                 </div>
                 <div>
                     <label>Show in currency</label>
-                    <input id="summaryCurrency" placeholder="CAD" style="width:120px" />
+                    <!--<input id="summaryCurrency" placeholder="CAD" style="width:120px" />-->
+                    <select id="summaryCurrency">
+                        <option value="CAD">CAD</option>
+                        <option value="EUR">EUR</option>
+                    </select>
                 </div>
                 <div class="flex">
                     <button type="submit">Apply</button>

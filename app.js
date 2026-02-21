@@ -160,6 +160,16 @@ async function fetchAndCacheRate(dateStr, currency) {
         const settings = await get('settings', settingsKey());
         const to = settings.homeCurrency.toUpperCase();
         const from = currency.toUpperCase();
+
+        // If the requested currency is the same as home currency, no conversion required.
+        // Return identity rate (1.0) represented in ppm and cache it.
+        if (from === to) {
+            const effectiveDate = dateStr || today();
+            const ppm = PPM; // 1.0 in ppm
+            await upsertFxRate(effectiveDate, from, ppm);
+            return { ppm, source: 'identity' };
+        }
+
         const datePath = dateStr || 'latest';
         const frankUrl = `https://api.frankfurter.app/${encodeURIComponent(datePath)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
 
@@ -182,6 +192,13 @@ async function fetchAndCacheRate(dateStr, currency) {
 // ---------- Get rate: cache-first, then Frankfurter ----------
 async function getOrFetchRate(dateStr, currency) {
     currency = currency.toUpperCase();
+
+    // If the requested currency is the same as the trip's home currency, return identity rate.
+    const settings = await get('settings', settingsKey());
+    const home = (settings.homeCurrency || '').toUpperCase();
+    if (currency === home) {
+        return { ppm: PPM, source: 'identity' };
+    }
 
     let ppm = await getFxRatePpmExact(dateStr, currency);
     if (ppm) return { ppm, source: 'frankfurter' };

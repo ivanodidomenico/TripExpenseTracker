@@ -13,7 +13,4 @@
     <Content Include="styles.css" />
     <Content Include="sw.js" />
   </ItemGroup>
-  <ItemGroup>
-    <Folder Include="wwwroot\" />
-  </ItemGroup>
 </Project>
