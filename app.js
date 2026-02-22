@@ -538,6 +538,101 @@ async function renderCategoryManagement(categories) {
     }).join('');
 }
 
+// ---------- Backup & Restore (export/import) ----------
+async function exportBackup() {
+    try {
+        const stores = ['trips', 'settings', 'categories', 'cashBatches', 'fxRates', 'expenses'];
+        const payload = { meta: { exportedAt: new Date().toISOString() }, stores: {} };
+        for (const s of stores) {
+            payload.stores[s] = await getAll(s);
+        }
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `tripx-backup-${today()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Export failed: ' + (err.message || err));
+    }
+}
+
+async function importBackupFile(file) {
+    if (!file) throw new Error('No file selected.');
+    const text = await file.text();
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    } catch (err) {
+        throw new Error('Invalid JSON file.');
+    }
+    if (!parsed || typeof parsed !== 'object' || !parsed.stores) {
+        throw new Error('Backup format not recognized.');
+    }
+
+    // Ask whether to wipe existing data or merge (overwrite-by-id)
+    const wipe = confirm('Import: Do you want to wipe existing data and replace it with the backup? Click Cancel to merge (existing records will be kept, incoming records will overwrite by id).');
+
+    const storeNames = Object.keys(parsed.stores);
+    // Basic validation: ensure arrays
+    for (const s of storeNames) {
+        if (!Array.isArray(parsed.stores[s])) throw new Error(`Backup store "${s}" is not an array.`);
+    }
+
+    // helper to derive a key for a record depending on store
+    const keyFor = (store, item) => {
+        if (!item || typeof item !== 'object') return null;
+        // common key fields: id, date
+        if (item.id != null) return item.id;
+        if (item.date != null) return item.date;
+        // fallbacks (very unlikely) - try known alternate fields
+        if (item.key != null) return item.key;
+        return null;
+    };
+
+    try {
+        if (wipe) {
+            // Delete all records in each store first (only when we can find a key)
+            for (const s of storeNames) {
+                const existing = await getAll(s);
+                for (const item of existing) {
+                    const key = keyFor(s, item);
+                    if (key != null) await del(s, key);
+                }
+            }
+        }
+
+        // Put items (merge/overwrite)
+        for (const s of storeNames) {
+            const items = parsed.stores[s];
+            for (const it of items) {
+                // For safety, ensure there's a key present for stores that require it.
+                // We'll just attempt put() and let the DB throw if invalid.
+                await put(s, it);
+            }
+        }
+
+        // If trips imported, set activeTripId to first trip if current trip doesn't exist
+        const importedTrips = parsed.stores['trips'] || [];
+        if (importedTrips.length) {
+            const trips = await listTrips();
+            // if current activeTripId no longer exists set to first imported trip
+            if (!trips.some(t => t.id === activeTripId)) {
+                activeTripId = importedTrips[0].id;
+                localStorage.setItem('activeTrip', activeTripId);
+            }
+        }
+
+        await render();
+        alert('Import complete.');
+    } catch (err) {
+        throw new Error('Import failed: ' + (err.message || err));
+    }
+}
+
 // ---------- Sync pending offline expenses ----------
 async function syncPendingExpenses() {
     try {
@@ -757,6 +852,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Display currency change
     document.getElementById('summaryCurrency').addEventListener('change', render);
+
+    // Backup/Restore handlers
+    document.getElementById('exportBackupBtn').addEventListener('click', exportBackup);
+    document.getElementById('importBackupBtn').addEventListener('click', async () => {
+        const fileEl = document.getElementById('importFile');
+        const file = fileEl.files && fileEl.files[0];
+        if (!file) { alert('Select a JSON backup file to import.'); return; }
+        try {
+            await importBackupFile(file);
+        } catch (err) {
+            alert(err.message || err);
+        }
+    });
 
     // Default initial values
     document.getElementById('cashDate').value = today();

@@ -194,6 +194,17 @@
             </form>
             <ul id="cashBatchesList"></ul>
         </div>
+
+        <!-- Backup & Restore -->
+        <div class="box">
+            <h2>Backup &amp; Restore</h2>
+            <div class="flex" style="margin-bottom:.5rem; align-items:center;">
+                <button id="exportBackupBtn" type="button">Export Backup (JSON)</button>
+                <input id="importFile" type="file" accept="application/json" style="margin-left:.5rem;" />
+                <button id="importBackupBtn" type="button" style="margin-left:.25rem;">Import Backup</button>
+            </div>
+            <div class="muted">Export creates a single JSON file containing all trips, settings, categories, expenses, fxRates, and cash batches. Import will merge and overwrite records with the same ids or optionally wipe and replace existing data.</div>
+        </div>
     </section>
 
     <script type="module" src="app.js"></script>
