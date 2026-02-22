@@ -18,6 +18,29 @@ function getActiveTripId() {
     return activeTripId;
 }
 
+// ---------- Settings helpers (normalize & loader) ----------
+function normalizeSettings(settings) {
+    // Ensure sensible defaults and support older single-value `tripCurrency`.
+    const s = Object.assign({ homeCurrency: 'CAD', ccFeePercent: 2.5 }, settings || {});
+    if (Array.isArray(s.tripCurrencies)) {
+        // already good
+    } else if (s.tripCurrency) {
+        s.tripCurrencies = [String(s.tripCurrency).toUpperCase()];
+        delete s.tripCurrency;
+    } else {
+        s.tripCurrencies = ['EUR'];
+    }
+    s.homeCurrency = String(s.homeCurrency || 'CAD').toUpperCase();
+    s.tripCurrencies = s.tripCurrencies.map(c => String(c).toUpperCase()).filter(Boolean);
+    if (!s.tripCurrencies.length) s.tripCurrencies = [s.homeCurrency];
+    return s;
+}
+
+async function loadSettings() {
+    const raw = await get('settings', settingsKey());
+    return normalizeSettings(raw);
+}
+
 // ---------- Trip management ----------
 async function listTrips() {
     return await getAll('trips');
@@ -30,8 +53,8 @@ async function createTrip(name) {
     const trip = { id, name, createdAt: new Date().toISOString() };
     await put('trips', trip);
 
-    // Create default settings for this trip
-    await put('settings', { id: `trip:${id}`, homeCurrency: 'CAD', tripCurrency: 'EUR', ccFeePercent: 2.5 });
+    // Create default settings for this trip (now supports multiple trip currencies)
+    await put('settings', { id: `trip:${id}`, homeCurrency: 'CAD', tripCurrencies: ['EUR'], ccFeePercent: 2.5 });
 
     // Create default category for this trip
     await put('categories', { id: crypto.randomUUID(), name: 'Meals', tripId: id });
@@ -82,39 +105,11 @@ function settingsKey() {
 }
 
 async function ensureDefaults() {
-    // Migrate v1 data: if there are no trips but there is old 'app' settings, create a default trip
+    // Ensure there's at least one trip and set activeTripId
     const trips = await listTrips();
     if (!trips.length) {
-        const oldSettings = await get('settings', 'app');
         const trip = await createTrip('My Trip');
         activeTripId = trip.id;
-
-        if (oldSettings) {
-            // Migrate old settings
-            await put('settings', {
-                id: `trip:${trip.id}`,
-                homeCurrency: oldSettings.homeCurrency || 'CAD',
-                tripCurrency: oldSettings.tripCurrency || 'EUR',
-                ccFeePercent: oldSettings.ccFeePercent ?? 2.5
-            });
-
-            // Migrate existing expenses, categories, and cash batches (assign tripId)
-            const existingExpenses = await getAll('expenses');
-            for (const e of existingExpenses) {
-                if (!e.tripId) { e.tripId = trip.id; await put('expenses', e); }
-            }
-            const existingCats = await getAll('categories');
-            for (const c of existingCats) {
-                if (!c.tripId) { c.tripId = trip.id; await put('categories', c); }
-            }
-            const existingBatches = await getAll('cashBatches');
-            for (const b of existingBatches) {
-                if (!b.tripId) { b.tripId = trip.id; await put('cashBatches', b); }
-            }
-
-            // Remove old settings key
-            await del('settings', 'app');
-        }
     } else {
         // Load last used trip from localStorage or pick first
         const lastTrip = localStorage.getItem('activeTrip');
@@ -126,12 +121,12 @@ async function ensureDefaults() {
     }
 
     localStorage.setItem('activeTrip', activeTripId);
-    return await get('settings', settingsKey());
+    return await loadSettings();
 }
 
 // ---------- FX Rates ----------
 async function upsertFxRate(dateStr, currency, ratePpm) {
-    const settings = await get('settings', settingsKey());
+    const settings = await loadSettings();
     const row = await get('fxRates', dateStr) || { date: dateStr, base: settings.homeCurrency, rates: {} };
     row.rates[currency] = ratePpm;
     await put('fxRates', row);
@@ -157,7 +152,7 @@ async function getFxRowAtOrBefore(dateStr) {
 // Always call Frankfurter directly (no server-side proxy)
 async function fetchAndCacheRate(dateStr, currency) {
     try {
-        const settings = await get('settings', settingsKey());
+        const settings = await loadSettings();
         const to = settings.homeCurrency.toUpperCase();
         const from = currency.toUpperCase();
 
@@ -194,7 +189,7 @@ async function getOrFetchRate(dateStr, currency) {
     currency = currency.toUpperCase();
 
     // If the requested currency is the same as the trip's home currency, return identity rate.
-    const settings = await get('settings', settingsKey());
+    const settings = await loadSettings();
     const home = (settings.homeCurrency || '').toUpperCase();
     if (currency === home) {
         return { ppm: PPM, source: 'identity' };
@@ -235,7 +230,7 @@ async function pickCashBatchFor(dateStr, currency) {
 
 // ---------- Expenses ----------
 async function addExpense({ date, currency, method, categoryId, description, amountLocal }) {
-    const settings = await get('settings', settingsKey());
+    const settings = await loadSettings();
     const amountLocalCents = toCents(amountLocal);
     currency = currency.toUpperCase();
 
@@ -252,20 +247,43 @@ async function addExpense({ date, currency, method, categoryId, description, amo
         fxSource = 'cashBatch';
         baseAmountCents = Math.round(amountLocalCents * batch.ratePpm / PPM);
     } else {
-        const result = await getOrFetchRate(date, currency);
+        // Try to get rate (cache-first). If we cannot obtain a rate and are offline,
+        // create the expense in a "pending" state (no conversion yet). When the app
+        // regains connectivity we'll attempt to fetch and apply the conversion.
+        let result = await getOrFetchRate(date, currency);
         if (!result) {
-            throw new Error(`Unable to fetch FX rate for ${currency} on ${date}. Check your internet connection and try again.`);
+            if (!navigator.onLine) {
+                fxRatePpm = null;
+                fxSource = 'pending';
+                baseAmountCents = null;
+            } else {
+                // We're online but couldn't find/fetch a rate: try a direct fetch attempt,
+                // then fallback to historical row before failing.
+                const fetched = await fetchAndCacheRate(date, currency);
+                if (fetched) result = fetched;
+                else {
+                    const fxRow = await getFxRowAtOrBefore(date);
+                    if (fxRow && fxRow.rates[currency]) result = { ppm: fxRow.rates[currency], source: 'frankfurter' };
+                }
+
+                if (!result) {
+                    throw new Error(`Unable to fetch FX rate for ${currency} on ${date}. Check your internet connection and try again.`);
+                }
+            }
         }
-        fxRatePpm = result.ppm;
-        fxSource = result.source;
 
-        // If the FX source is 'identity' (from == homeCurrency), ignore the credit-card fee.
-        // Otherwise apply the configured cc fee.
-        const eff = (fxSource === 'identity')
-            ? fxRatePpm
-            : applyFeePpm(fxRatePpm, settings.ccFeePercent ?? 2.5);
+        if (result) {
+            fxRatePpm = result.ppm;
+            fxSource = result.source;
 
-        baseAmountCents = Math.round(amountLocalCents * eff / PPM);
+            // If the FX source is 'identity' (from == homeCurrency), ignore the credit-card fee.
+            // Otherwise apply the configured cc fee.
+            const eff = (fxSource === 'identity')
+                ? fxRatePpm
+                : applyFeePpm(fxRatePpm, settings.ccFeePercent ?? 2.5);
+
+            baseAmountCents = Math.round(amountLocalCents * eff / PPM);
+        }
     }
 
     await put('expenses', {
@@ -301,11 +319,12 @@ async function getExpensesInRange(startDate, endDate) {
 }
 
 async function sumBaseCents(expenses) {
-    return expenses.reduce((acc, e) => acc + e.baseAmountCents, 0);
+    // Ignore expenses that have not yet been converted (baseAmountCents == null).
+    return expenses.reduce((acc, e) => acc + (e.baseAmountCents || 0), 0);
 }
 
 async function convertBaseToTargetCents(baseCents, targetCurrency, endDate) {
-    const settings = await get('settings', settingsKey());
+    const settings = await loadSettings();
     const home = settings.homeCurrency.toUpperCase();
     targetCurrency = targetCurrency.toUpperCase();
     if (targetCurrency === home) return baseCents;
@@ -371,6 +390,7 @@ function fxSourceLabel(source) {
     switch (source) {
         case 'frankfurter': return '🌐';
         case 'cashBatch': return '💵';
+        case 'pending': return '⏳';
         default: return '🌐';
     }
 }
@@ -392,29 +412,49 @@ async function renderTripSelector() {
 
 async function render() {
     await renderTripSelector();
-    const settings = await get('settings', settingsKey());
+    const settings = await loadSettings();
 
     // --- Settings page ---
     $('#homeCurrency').value = settings.homeCurrency;
-    $('#tripCurrency').value = settings.tripCurrency;
+    $('#tripCurrencies').value = settings.tripCurrencies.join(', ');
     $('#ccFee').value = settings.ccFeePercent;
 
-    // --- Expense page: category selector ---
+    // Prepare currency lists
+    const tripCurrencies = settings.tripCurrencies && settings.tripCurrencies.length ? settings.tripCurrencies : [settings.homeCurrency];
+    const allDisplayCurrencies = Array.from(new Set([settings.homeCurrency, ...tripCurrencies]));
+
+    // --- Expense page: currency selector & category selector ---
+    const currencyEl = document.getElementById('currency');
+    const prevCurrency = currencyEl.value;
+    currencyEl.innerHTML = allDisplayCurrencies.map(c => `<option value="${c}">${c}</option>`).join('');
+    currencyEl.value = allDisplayCurrencies.includes(prevCurrency) ? prevCurrency : allDisplayCurrencies[0];
+
     const cats = await listCategories();
     const sel = $('#category');
     sel.innerHTML = cats.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
-    // --- Settings page: cash batch list ---
+    // --- Settings page: cash batch list & cash currency select ---
+    const cashCurrencyEl = document.getElementById('cashCurrency');
+    const prevCash = cashCurrencyEl.value;
+    cashCurrencyEl.innerHTML = allDisplayCurrencies.map(c => `<option value="${c}">${c}</option>`).join('');
+    cashCurrencyEl.value = allDisplayCurrencies.includes(prevCash) ? prevCash : allDisplayCurrencies[0];
+
     const batches = await indexGetAllKey('cashBatches', 'byTrip', getActiveTripId());
     $('#cashBatchesList').innerHTML = batches
         .sort((a, b) => new Date(b.date) - new Date(a.date))
         .map(b => `<li>${b.date} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${(b.purchasedAmountCents / 100).toFixed(2)}</li>`)
         .join('');
 
-    // --- Summary page ---
+    // --- Summary page: populate display currency selector ---
+    const summaryEl = document.getElementById('summaryCurrency');
+    const prevSummary = summaryEl.value;
+    summaryEl.innerHTML = allDisplayCurrencies.map(c => `<option value="${c}">${c}</option>`).join('');
+    summaryEl.value = allDisplayCurrencies.includes(prevSummary) ? prevSummary : settings.homeCurrency;
+
+    // --- Summary page content ---
     const startDate = $('#startDate').value || null;
     const endDate = $('#endDate').value || null;
-    const displayCurrency = ($('#summaryCurrency').value || settings.homeCurrency).toUpperCase();
+    const displayCurrency = (summaryEl.value || settings.homeCurrency).toUpperCase();
 
     const exps = (await getExpensesInRange(startDate, endDate))
         .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -426,13 +466,16 @@ async function render() {
             const catName = catMap.get(e.categoryId) || '—';
             const rateDisplay = formatRate(e.fxRatePpm);
             const sourceIcon = fxSourceLabel(e.fxSource);
+            const baseDisplay = (e.baseAmountCents == null)
+                ? `<span class="muted">pending</span>`
+                : `${(e.baseAmountCents / 100).toFixed(2)} ${settings.homeCurrency}`;
             return `<tr data-expense-id="${e.id}">
                 <td>${e.date}</td>
                 <td>${catName}</td>
                 <td>${e.method.toUpperCase()}</td>
                 <td>${e.currency} ${(e.amountLocalCents / 100).toFixed(2)}</td>
                 <td><span title="${e.fxSource || 'frankfurter'}">${sourceIcon}</span> ${rateDisplay}</td>
-                <td>${(e.baseAmountCents / 100).toFixed(2)} ${settings.homeCurrency}</td>
+                <td>${baseDisplay}</td>
                 <td>${e.description || ''}</td>
                 <td class="actions"><button class="deleteExpenseBtn" type="button">Delete</button></td>
             </tr>`;
@@ -457,7 +500,8 @@ async function renderCategorySummary(expenses, categories, displayCurrency, endD
     for (const e of expenses) {
         const agg = aggregates.get(e.categoryId) || { count: 0, baseCents: 0 };
         agg.count += 1;
-        agg.baseCents += e.baseAmountCents;
+        // Treat unconverted expenses as zero for summary aggregation.
+        agg.baseCents += (e.baseAmountCents || 0);
         aggregates.set(e.categoryId, agg);
     }
 
@@ -494,6 +538,36 @@ async function renderCategoryManagement(categories) {
     }).join('');
 }
 
+// ---------- Sync pending offline expenses ----------
+async function syncPendingExpenses() {
+    try {
+        const tripId = getActiveTripId();
+        const all = await indexGetAllKey('expenses', 'byTrip', tripId);
+        // Select expenses that need conversion (non-cash and missing fxRatePpm or fxSource === 'pending')
+        const pending = all.filter(e => e.method !== 'cash' && (!e.fxRatePpm || e.fxSource === 'pending' || e.baseAmountCents == null));
+        if (!pending.length) return;
+        for (const e of pending) {
+            try {
+                const result = await getOrFetchRate(e.date, e.currency);
+                if (!result) continue;
+                const settings = await loadSettings();
+                const eff = (result.source === 'identity')
+                    ? result.ppm
+                    : applyFeePpm(result.ppm, settings.ccFeePercent ?? 2.5);
+                e.fxRatePpm = result.ppm;
+                e.fxSource = result.source;
+                e.baseAmountCents = Math.round(e.amountLocalCents * eff / PPM);
+                await put('expenses', e);
+            } catch {
+                // ignore per-expense errors and continue
+            }
+        }
+        await render();
+    } catch {
+        // top-level ignore
+    }
+}
+
 // ---------- Event handlers ----------
 document.addEventListener('DOMContentLoaded', async () => {
     initTabs();
@@ -506,9 +580,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('#tripSelector').addEventListener('change', async () => {
         activeTripId = $('#tripSelector').value;
         localStorage.setItem('activeTrip', activeTripId);
-        const settings = await get('settings', settingsKey());
-        document.getElementById('currency').value = settings.tripCurrency;
-        document.getElementById('cashCurrency').value = settings.tripCurrency;
+        const settings = await loadSettings();
+        // set currency controls based on tripCurrencies
+        const tripCurrencies = settings.tripCurrencies.length ? settings.tripCurrencies : [settings.homeCurrency];
+        document.getElementById('currency').value = tripCurrencies[0];
+        document.getElementById('cashCurrency').value = tripCurrencies[0];
         document.getElementById('summaryCurrency').value = settings.homeCurrency;
         await render();
     });
@@ -520,9 +596,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const trip = await createTrip(name);
             activeTripId = trip.id;
             localStorage.setItem('activeTrip', activeTripId);
-            const settings = await get('settings', settingsKey());
-            document.getElementById('currency').value = settings.tripCurrency;
-            document.getElementById('cashCurrency').value = settings.tripCurrency;
+            const settings = await loadSettings();
+            document.getElementById('currency').value = settings.tripCurrencies[0];
+            document.getElementById('cashCurrency').value = settings.tripCurrencies[0];
             document.getElementById('summaryCurrency').value = settings.homeCurrency;
             await render();
         } catch (err) { alert(err.message); }
@@ -548,9 +624,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const remaining = await listTrips();
         activeTripId = remaining[0].id;
         localStorage.setItem('activeTrip', activeTripId);
-        const settings = await get('settings', settingsKey());
-        document.getElementById('currency').value = settings.tripCurrency;
-        document.getElementById('cashCurrency').value = settings.tripCurrency;
+        const settings = await loadSettings();
+        document.getElementById('currency').value = settings.tripCurrencies[0];
+        document.getElementById('cashCurrency').value = settings.tripCurrencies[0];
         document.getElementById('summaryCurrency').value = settings.homeCurrency;
         await render();
     });
@@ -558,10 +634,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Settings form
     document.getElementById('settingsForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        // Support comma-separated list for trip currencies
+        const rawTrips = document.getElementById('tripCurrencies').value || '';
+        const tripCurrencies = Array.from(new Set(
+            rawTrips.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+        ));
         await put('settings', {
             id: settingsKey(),
             homeCurrency: document.getElementById('homeCurrency').value.trim().toUpperCase(),
-            tripCurrency: document.getElementById('tripCurrency').value.trim().toUpperCase(),
+            tripCurrencies,
             ccFeePercent: Number(document.getElementById('ccFee').value)
         });
         await render();
@@ -662,8 +743,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             await addExpense({ date, currency, method, categoryId, description, amountLocal });
             e.target.reset();
             document.getElementById('date').value = today();
-            const settings = await get('settings', settingsKey());
-            document.getElementById('currency').value = settings.tripCurrency;
+            const settings = await loadSettings();
+            document.getElementById('currency').value = settings.tripCurrencies[0];
             await render();
         } catch (err) {
             alert(err.message);
@@ -679,13 +760,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Default initial values
     document.getElementById('cashDate').value = today();
-    const settings = await get('settings', settingsKey());
-    document.getElementById('currency').value = settings.tripCurrency;
-    document.getElementById('cashCurrency').value = settings.tripCurrency;
+    const settings = await loadSettings();
+    document.getElementById('currency').value = settings.tripCurrencies[0];
+    document.getElementById('cashCurrency').value = settings.tripCurrencies[0];
     document.getElementById('summaryCurrency').value = settings.homeCurrency;
 
     // First render
     await render();
+
+    // Attempt to sync any pending offline expenses now (if online)
+    if (navigator.onLine) await syncPendingExpenses();
+
+    // Register online handler to sync when connectivity returns
+    window.addEventListener('online', async () => {
+        await syncPendingExpenses();
+    });
 
     // Register SW
     if ('serviceWorker' in navigator) {

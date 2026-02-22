@@ -40,10 +40,7 @@
                 </div>
                 <div>
                     <label>Currency</label>
-                    <select id="currency">
-                        <option value="EUR">EUR</option>
-                        <option value="CAD">CAD</option>
-                    </select>
+                    <select id="currency"></select>
                 </div>
                 <div>
                     <label>Method</label>
@@ -72,6 +69,20 @@
     <!-- ==================== PAGE: Summary ==================== -->
     <section id="page-summary" class="page">
         <div class="box">
+            <h2>By Category</h2>
+            <table class="table">
+                <thead>
+                    <tr><th>Category</th><th>Count</th><th>Total (display currency)</th></tr>
+                </thead>
+                <tbody id="categorySummaryBody"></tbody>
+                <tfoot>
+                    <tr><td>All Categories</td><td id="catTotalCount">0</td><td id="catGrandTotal">0</td></tr>
+                </tfoot>
+            </table>
+            <div class="muted">Category totals respect your date range and display currency.</div>
+        </div>
+
+        <div class="box">
             <h2>Filters &amp; Summary</h2>
             <form id="filterForm">
                 <div>
@@ -84,11 +95,7 @@
                 </div>
                 <div>
                     <label>Show in currency</label>
-                    <!--<input id="summaryCurrency" placeholder="CAD" style="width:120px" />-->
-                    <select id="summaryCurrency">
-                        <option value="CAD">CAD</option>
-                        <option value="EUR">EUR</option>
-                    </select>
+                    <select id="summaryCurrency"></select>
                 </div>
                 <div class="flex">
                     <button type="submit">Apply</button>
@@ -125,19 +132,6 @@
             </div>
         </div>
 
-        <div class="box">
-            <h2>By Category</h2>
-            <table class="table">
-                <thead>
-                    <tr><th>Category</th><th>Count</th><th>Total (display currency)</th></tr>
-                </thead>
-                <tbody id="categorySummaryBody"></tbody>
-                <tfoot>
-                    <tr><td>All Categories</td><td id="catTotalCount">0</td><td id="catGrandTotal">0</td></tr>
-                </tfoot>
-            </table>
-            <div class="muted">Category totals respect your date range and display currency.</div>
-        </div>
     </section>
 
     <!-- ==================== PAGE: Settings ==================== -->
@@ -150,8 +144,8 @@
                     <input id="homeCurrency" placeholder="CAD" required />
                 </div>
                 <div>
-                    <label>Trip currency (local)</label>
-                    <input id="tripCurrency" placeholder="EUR" required />
+                    <label>Trip currencies (local)</label>
+                    <input id="tripCurrencies" placeholder="EUR, GBP" required />
                 </div>
                 <div>
                     <label>Credit card fee (%)</label>
@@ -159,7 +153,7 @@
                 </div>
                 <div><button type="submit">Save</button></div>
             </form>
-            <div class="muted">Tip: Home currency is your base (e.g., CAD). Trip currency is the local currency (e.g., EUR).</div>
+            <div class="muted">Tip: Home currency is your base (e.g., CAD). Trip currencies are local currencies used on this trip (comma-separated).</div>
         </div>
 
         <div class="row">
@@ -186,7 +180,7 @@
                 </div>
                 <div>
                     <label>Currency</label>
-                    <input id="cashCurrency" required />
+                    <select id="cashCurrency" required></select>
                 </div>
                 <div>
                     <label>Rate (1 unit → home)</label>

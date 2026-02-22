@@ -1,55 +1,66 @@
 export const DB_NAME = 'tripx';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 function openDB() {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (event) => {
+        req.onupgradeneeded = () => {
             const db = req.result;
-            const oldVersion = event.oldVersion;
 
-            // --- V1 stores ---
-            if (oldVersion < 1) {
-                if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'id' });
-                if (!db.objectStoreNames.contains('categories')) db.createObjectStore('categories', { keyPath: 'id' });
-                if (!db.objectStoreNames.contains('cashBatches')) {
-                    const s = db.createObjectStore('cashBatches', { keyPath: 'id' });
-                    s.createIndex('byDate', 'date');
-                }
-                if (!db.objectStoreNames.contains('fxRates')) {
-                    db.createObjectStore('fxRates', { keyPath: 'date' });
-                }
-                if (!db.objectStoreNames.contains('expenses')) {
-                    const s = db.createObjectStore('expenses', { keyPath: 'id' });
-                    s.createIndex('byDate', 'date');
-                    s.createIndex('byCategory', 'categoryId');
-                }
+            // Ensure current stores + indexes exist (idempotent)
+            if (!db.objectStoreNames.contains('settings')) {
+                db.createObjectStore('settings', { keyPath: 'id' });
             }
 
-            // --- V2: multi-trip support ---
-            if (oldVersion < 2) {
-                // Trips store
-                if (!db.objectStoreNames.contains('trips')) {
-                    db.createObjectStore('trips', { keyPath: 'id' });
-                }
+            if (!db.objectStoreNames.contains('categories')) {
+                const s = db.createObjectStore('categories', { keyPath: 'id' });
+                if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+            } else {
+                const s = req.transaction.objectStore('categories');
+                if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+            }
 
-                // Add tripId indexes to existing stores
+            if (!db.objectStoreNames.contains('cashBatches')) {
+                const s = db.createObjectStore('cashBatches', { keyPath: 'id' });
+                if (!s.indexNames.contains('byDate')) s.createIndex('byDate', 'date');
+                if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+            } else {
+                const s = req.transaction.objectStore('cashBatches');
+                if (!s.indexNames.contains('byDate')) s.createIndex('byDate', 'date');
+                if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+            }
+
+            if (!db.objectStoreNames.contains('fxRates')) {
+                db.createObjectStore('fxRates', { keyPath: 'date' });
+            }
+
+            if (!db.objectStoreNames.contains('expenses')) {
+                const s = db.createObjectStore('expenses', { keyPath: 'id' });
+                if (!s.indexNames.contains('byDate')) s.createIndex('byDate', 'date');
+                if (!s.indexNames.contains('byCategory')) s.createIndex('byCategory', 'categoryId');
+                if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+            } else {
+                const s = req.transaction.objectStore('expenses');
+                if (!s.indexNames.contains('byDate')) s.createIndex('byDate', 'date');
+                if (!s.indexNames.contains('byCategory')) s.createIndex('byCategory', 'categoryId');
+                if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+            }
+
+            if (!db.objectStoreNames.contains('trips')) {
+                db.createObjectStore('trips', { keyPath: 'id' });
+            }
+
+            // One-time cleanup for legacy records:
+            // Remove old global settings key 'app' if present.
+            try {
                 const txn = req.transaction;
-
-                const expStore = txn.objectStore('expenses');
-                if (!expStore.indexNames.contains('byTrip')) {
-                    expStore.createIndex('byTrip', 'tripId');
+                if (txn && txn.objectStoreNames.contains('settings')) {
+                    const settingsStore = txn.objectStore('settings');
+                    // Delete legacy 'app' key (ignore result)
+                    settingsStore.delete('app');
                 }
-
-                const catStore = txn.objectStore('categories');
-                if (!catStore.indexNames.contains('byTrip')) {
-                    catStore.createIndex('byTrip', 'tripId');
-                }
-
-                const cashStore = txn.objectStore('cashBatches');
-                if (!cashStore.indexNames.contains('byTrip')) {
-                    cashStore.createIndex('byTrip', 'tripId');
-                }
+            } catch (err) {
+                // swallow any errors during cleanup so upgrade still completes
             }
         };
         req.onsuccess = () => resolve(req.result);
