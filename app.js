@@ -1,4 +1,4 @@
-import { put, get, getAll, del, indexGetAll, indexGetAllRange, indexGetAllKey } from './db.js';
+import { put, get, getAll, del, indexGetAllRange, indexGetAllKey } from './db.js';
 
 // ---------- Money & Rate helpers ----------
 const PPM = 1_000_000;
@@ -228,6 +228,16 @@ async function pickCashBatchFor(dateStr, currency) {
     return candidates[0] || null;
 }
 
+// New: delete cash batch if unused
+async function deleteCashBatch(batchId) {
+    // Do not allow deletion if any expense references this cash batch.
+    const exps = await indexGetAllKey('expenses', 'byTrip', getActiveTripId());
+    const used = exps.some(e => e.cashBatchId === batchId);
+    if (used) return false;
+    await del('cashBatches', batchId);
+    return true;
+}
+
 // ---------- Expenses ----------
 async function addExpense({ date, currency, method, categoryId, description, amountLocal }) {
     const settings = await loadSettings();
@@ -300,6 +310,72 @@ async function addExpense({ date, currency, method, categoryId, description, amo
         fxSource,
         cashBatchId
     });
+}
+
+// New: update existing expense (recalculate fx/base as needed)
+async function updateExpense(id, { date, currency, method, categoryId, description, amountLocal }) {
+    const exp = await get('expenses', id);
+    if (!exp) throw new Error('Expense not found.');
+
+    // Apply changed fields
+    exp.date = date;
+    exp.currency = currency.toUpperCase();
+    exp.method = method;
+    exp.categoryId = categoryId;
+    exp.description = description;
+    exp.amountLocalCents = toCents(amountLocal);
+
+    // Recompute conversion fields similarly to addExpense
+    const settings = await loadSettings();
+    let baseAmountCents = null;
+    let cashBatchId = null;
+    let fxRatePpm = null;
+    let fxSource = 'frankfurter';
+
+    if (method === 'cash') {
+        const batch = await pickCashBatchFor(date, exp.currency);
+        if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${date}. Add a cash batch first.`);
+        cashBatchId = batch.id;
+        fxRatePpm = batch.ratePpm;
+        fxSource = 'cashBatch';
+        baseAmountCents = Math.round(exp.amountLocalCents * batch.ratePpm / PPM);
+    } else {
+        let result = await getOrFetchRate(date, exp.currency);
+        if (!result) {
+            if (!navigator.onLine) {
+                fxRatePpm = null;
+                fxSource = 'pending';
+                baseAmountCents = null;
+            } else {
+                const fetched = await fetchAndCacheRate(date, exp.currency);
+                if (fetched) result = fetched;
+                else {
+                    const fxRow = await getFxRowAtOrBefore(date);
+                    if (fxRow && fxRow.rates[exp.currency]) result = { ppm: fxRow.rates[exp.currency], source: 'frankfurter' };
+                }
+
+                if (!result) {
+                    throw new Error(`Unable to fetch FX rate for ${exp.currency} on ${date}.`);
+                }
+            }
+        }
+
+        if (result) {
+            fxRatePpm = result.ppm;
+            fxSource = result.source;
+            const eff = (fxSource === 'identity')
+                ? fxRatePpm
+                : applyFeePpm(fxRatePpm, settings.ccFeePercent ?? 2.5);
+            baseAmountCents = Math.round(exp.amountLocalCents * eff / PPM);
+        }
+    }
+
+    exp.baseAmountCents = baseAmountCents;
+    exp.fxRatePpm = fxRatePpm;
+    exp.fxSource = fxSource;
+    exp.cashBatchId = cashBatchId;
+
+    await put('expenses', exp);
 }
 
 async function deleteExpense(id) {
@@ -442,7 +518,7 @@ async function render() {
     const batches = await indexGetAllKey('cashBatches', 'byTrip', getActiveTripId());
     $('#cashBatchesList').innerHTML = batches
         .sort((a, b) => new Date(b.date) - new Date(a.date))
-        .map(b => `<li>${b.date} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${(b.purchasedAmountCents / 100).toFixed(2)}</li>`)
+        .map(b => `<li data-id="${b.id}">${b.date} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${(b.purchasedAmountCents / 100).toFixed(2)} <span class="actions"><button class="editCashBtn" type="button">Edit</button> <button class="deleteCashBtn" type="button">Delete</button></span></li>`)
         .join('');
 
     // --- Summary page: populate display currency selector ---
@@ -477,7 +553,7 @@ async function render() {
                 <td><span title="${e.fxSource || 'frankfurter'}">${sourceIcon}</span> ${rateDisplay}</td>
                 <td>${baseDisplay}</td>
                 <td>${e.description || ''}</td>
-                <td class="actions"><button class="deleteExpenseBtn" type="button">Delete</button></td>
+                <td class="actions"><button class="editExpenseBtn" type="button">Edit</button> <button class="deleteExpenseBtn" type="button">Delete</button></td>
             </tr>`;
         }).join('')
         : `<tr><td colspan="8" class="muted">No expenses in this range.</td></tr>`;
@@ -800,15 +876,68 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Expense delete (event delegation on the expenses table)
+    // Expense table actions (edit/delete) - event delegation
     document.getElementById('expensesTbody').addEventListener('click', async (e) => {
-        if (!e.target.classList.contains('deleteExpenseBtn')) return;
         const tr = e.target.closest('tr[data-expense-id]');
         if (!tr) return;
         const id = tr.getAttribute('data-expense-id');
-        if (!confirm('Delete this expense?')) return;
-        await deleteExpense(id);
-        await render();
+
+        if (e.target.classList.contains('deleteExpenseBtn')) {
+            if (!confirm('Delete this expense?')) return;
+            await deleteExpense(id);
+            await render();
+            return;
+        }
+
+        if (e.target.classList.contains('editExpenseBtn')) {
+            try {
+                const exp = await get('expenses', id);
+                if (!exp) return;
+                const cats = await listCategories();
+                const catNames = cats.map(c => c.name).join(', ');
+
+                const newDate = prompt('Date (YYYY-MM-DD):', exp.date);
+                if (newDate == null) return;
+
+                const newCurrency = prompt('Currency (e.g., EUR):', exp.currency);
+                if (newCurrency == null) return;
+
+                const newMethod = prompt('Method (credit/cash):', exp.method);
+                if (newMethod == null) return;
+
+                const newAmount = prompt('Amount (local):', (exp.amountLocalCents / 100).toFixed(2));
+                if (newAmount == null) return;
+
+                const newCategoryName = prompt(`Category (choose exact name):\nAvailable: ${catNames}`, (cats.find(c => c.id === exp.categoryId) || {}).name || '');
+                if (newCategoryName == null) return;
+
+                const newDesc = prompt('Description (optional):', exp.description || '');
+                if (newDesc == null) return;
+
+                // Basic validation
+                if (!newDate.trim() || !newCurrency.trim() || !newMethod.trim() || isNaN(Number(newAmount))) {
+                    alert('Invalid input. Edit cancelled.');
+                    return;
+                }
+
+                const targetCat = cats.find(c => c.name.toLowerCase() === newCategoryName.trim().toLowerCase());
+                if (!targetCat) { alert('No matching category found. Edit cancelled.'); return; }
+
+                await updateExpense(id, {
+                    date: newDate.trim(),
+                    currency: newCurrency.trim().toUpperCase(),
+                    method: newMethod.trim().toLowerCase(),
+                    categoryId: targetCat.id,
+                    description: newDesc.trim(),
+                    amountLocal: newAmount
+                });
+
+                await render();
+            } catch (err) {
+                alert('Edit failed: ' + (err.message || err));
+            }
+            return;
+        }
     });
 
     // Cash batch add
@@ -822,6 +951,55 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.target.reset();
         document.getElementById('cashDate').value = today();
         await render();
+    });
+
+    // Cash batch list actions (edit/delete)
+    document.getElementById('cashBatchesList').addEventListener('click', async (e) => {
+        const li = e.target.closest('li[data-id]');
+        if (!li) return;
+        const id = li.getAttribute('data-id');
+
+        if (e.target.classList.contains('deleteCashBtn')) {
+            if (!confirm('Delete this cash batch?')) return;
+            const ok = await deleteCashBatch(id);
+            if (!ok) {
+                alert('Cannot delete this cash batch — one or more expenses reference it. Reassign or delete those expenses first.');
+                return;
+            }
+            await render();
+            return;
+        }
+
+        if (e.target.classList.contains('editCashBtn')) {
+            try {
+                const batch = await get('cashBatches', id);
+                if (!batch) return;
+                const newDate = prompt('Date bought (YYYY-MM-DD):', batch.date);
+                if (newDate == null) return;
+                const newCurrency = prompt('Currency (e.g., EUR):', batch.currency);
+                if (newCurrency == null) return;
+                const newRate = prompt('Rate (1 unit → home):', (batch.ratePpm / PPM).toFixed(6));
+                if (newRate == null) return;
+                const newAmount = prompt('Amount (local):', (batch.purchasedAmountCents / 100).toFixed(2));
+                if (newAmount == null) return;
+
+                // Basic validation
+                if (!newDate.trim() || !newCurrency.trim() || isNaN(Number(newRate)) || isNaN(Number(newAmount))) {
+                    alert('Invalid input. Edit cancelled.');
+                    return;
+                }
+
+                batch.date = newDate.trim();
+                batch.currency = newCurrency.trim().toUpperCase();
+                batch.ratePpm = rateToPpm(newRate);
+                batch.purchasedAmountCents = toCents(newAmount);
+                await put('cashBatches', batch);
+                await render();
+            } catch (err) {
+                alert('Edit failed: ' + (err.message || err));
+            }
+            return;
+        }
     });
 
     // Expense add
