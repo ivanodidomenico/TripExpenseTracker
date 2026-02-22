@@ -570,6 +570,16 @@ async function render() {
     await renderCategoryManagement(cats);
 }
 
+// ---------- Inline expense editor helper ----------
+function createSelectHtml(options, selectedValue, valueAttr = 'value') {
+    return options.map(opt => {
+        const value = opt[valueAttr] ?? opt;
+        const label = opt.name ?? opt;
+        return `<option value="${String(value)}"${String(value) === String(selectedValue) ? ' selected' : ''}>${label}</option>`;
+    }).join('');
+}
+
+// ---------- Category summary / management (unchanged) ----------
 async function renderCategorySummary(expenses, categories, displayCurrency, endDate, homeCurrency) {
     const catMap = new Map(categories.map(c => [c.id, c.name]));
     const aggregates = new Map();
@@ -876,7 +886,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Expense table actions (edit/delete) - event delegation
+    // Expense table actions (edit/delete) - event delegation with in-place editor
     document.getElementById('expensesTbody').addEventListener('click', async (e) => {
         const tr = e.target.closest('tr[data-expense-id]');
         if (!tr) return;
@@ -890,53 +900,80 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (e.target.classList.contains('editExpenseBtn')) {
+            // Build and show in-place editor for this row
             try {
                 const exp = await get('expenses', id);
                 if (!exp) return;
                 const cats = await listCategories();
-                const catNames = cats.map(c => c.name).join(', ');
+                const settings = await loadSettings();
+                const allCurrencies = Array.from(new Set([settings.homeCurrency, ...(settings.tripCurrencies || [])]));
 
-                const newDate = prompt('Date (YYYY-MM-DD):', exp.date);
-                if (newDate == null) return;
+                // Save current row HTML to restore on cancel if needed
+                const originalHtml = tr.innerHTML;
 
-                const newCurrency = prompt('Currency (e.g., EUR):', exp.currency);
-                if (newCurrency == null) return;
+                // Construct editor cells
+                const categoryOptions = createSelectHtml(cats, exp.categoryId, 'id');
+                const currencyOptions = createSelectHtml(allCurrencies, exp.currency);
+                const methodOptionsHtml = `<option value="credit"${exp.method === 'credit' ? ' selected' : ''}>Credit</option><option value="cash"${exp.method === 'cash' ? ' selected' : ''}>Cash</option>`;
 
-                const newMethod = prompt('Method (credit/cash):', exp.method);
-                if (newMethod == null) return;
+                tr.innerHTML = `
+                    <td><input class="edit-date" type="date" value="${exp.date}" /></td>
+                    <td><select class="edit-category">${categoryOptions}</select></td>
+                    <td><select class="edit-method">${methodOptionsHtml}</select></td>
+                    <td>
+                      <select class="edit-currency">${currencyOptions}</select>
+                      <input class="edit-amount" type="number" step="0.01" style="width:6.5rem; margin-left:.5rem;" value="${(exp.amountLocalCents / 100).toFixed(2)}" />
+                    </td>
+                    <td class="edit-fx">${formatRate(exp.fxRatePpm)}</td>
+                    <td class="edit-base">${exp.baseAmountCents == null ? '<span class="muted">pending</span>' : (exp.baseAmountCents/100).toFixed(2)}</td>
+                    <td><input class="edit-desc" type="text" value="${(exp.description || '').replace(/"/g, '&quot;')}" /></td>
+                    <td class="actions">
+                      <button class="saveExpenseBtn" type="button">Save</button>
+                      <button class="cancelExpenseBtn" type="button">Cancel</button>
+                    </td>`;
 
-                const newAmount = prompt('Amount (local):', (exp.amountLocalCents / 100).toFixed(2));
-                if (newAmount == null) return;
-
-                const newCategoryName = prompt(`Category (choose exact name):\nAvailable: ${catNames}`, (cats.find(c => c.id === exp.categoryId) || {}).name || '');
-                if (newCategoryName == null) return;
-
-                const newDesc = prompt('Description (optional):', exp.description || '');
-                if (newDesc == null) return;
-
-                // Basic validation
-                if (!newDate.trim() || !newCurrency.trim() || !newMethod.trim() || isNaN(Number(newAmount))) {
-                    alert('Invalid input. Edit cancelled.');
-                    return;
-                }
-
-                const targetCat = cats.find(c => c.name.toLowerCase() === newCategoryName.trim().toLowerCase());
-                if (!targetCat) { alert('No matching category found. Edit cancelled.'); return; }
-
-                await updateExpense(id, {
-                    date: newDate.trim(),
-                    currency: newCurrency.trim().toUpperCase(),
-                    method: newMethod.trim().toLowerCase(),
-                    categoryId: targetCat.id,
-                    description: newDesc.trim(),
-                    amountLocal: newAmount
+                // Wire up cancel
+                tr.querySelector('.cancelExpenseBtn').addEventListener('click', () => {
+                    tr.innerHTML = originalHtml;
                 });
 
-                await render();
+                // Wire up save
+                tr.querySelector('.saveExpenseBtn').addEventListener('click', async (ev) => {
+                    const btn = ev.target;
+                    btn.disabled = true;
+                    try {
+                        const newDate = tr.querySelector('.edit-date').value;
+                        const newCategoryId = tr.querySelector('.edit-category').value;
+                        const newMethod = tr.querySelector('.edit-method').value;
+                        const newCurrency = tr.querySelector('.edit-currency').value;
+                        const newAmount = tr.querySelector('.edit-amount').value;
+                        const newDesc = tr.querySelector('.edit-desc').value || '';
+
+                        // Basic validation
+                        if (!newDate || !newCurrency || !newMethod || isNaN(Number(newAmount))) {
+                            alert('Invalid input. Please check date, currency, method, and amount.');
+                            btn.disabled = false;
+                            return;
+                        }
+
+                        await updateExpense(id, {
+                            date: newDate,
+                            currency: newCurrency.trim().toUpperCase(),
+                            method: newMethod.trim().toLowerCase(),
+                            categoryId: newCategoryId,
+                            description: newDesc.trim(),
+                            amountLocal: newAmount
+                        });
+
+                        await render();
+                    } catch (err) {
+                        alert('Save failed: ' + (err.message || err));
+                        btn.disabled = false;
+                    }
+                });
             } catch (err) {
                 alert('Edit failed: ' + (err.message || err));
             }
-            return;
         }
     });
 
@@ -953,7 +990,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await render();
     });
 
-    // Cash batch list actions (edit/delete)
+    // Cash batch list actions (edit/delete) - inline editor
     document.getElementById('cashBatchesList').addEventListener('click', async (e) => {
         const li = e.target.closest('li[data-id]');
         if (!li) return;
@@ -974,27 +1011,62 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const batch = await get('cashBatches', id);
                 if (!batch) return;
-                const newDate = prompt('Date bought (YYYY-MM-DD):', batch.date);
-                if (newDate == null) return;
-                const newCurrency = prompt('Currency (e.g., EUR):', batch.currency);
-                if (newCurrency == null) return;
-                const newRate = prompt('Rate (1 unit → home):', (batch.ratePpm / PPM).toFixed(6));
-                if (newRate == null) return;
-                const newAmount = prompt('Amount (local):', (batch.purchasedAmountCents / 100).toFixed(2));
-                if (newAmount == null) return;
+                const settings = await loadSettings();
+                const allCurrencies = Array.from(new Set([settings.homeCurrency, ...(settings.tripCurrencies || [])]));
 
-                // Basic validation
-                if (!newDate.trim() || !newCurrency.trim() || isNaN(Number(newRate)) || isNaN(Number(newAmount))) {
-                    alert('Invalid input. Edit cancelled.');
-                    return;
-                }
+                // Save original HTML to restore on cancel
+                const originalHtml = li.innerHTML;
 
-                batch.date = newDate.trim();
-                batch.currency = newCurrency.trim().toUpperCase();
-                batch.ratePpm = rateToPpm(newRate);
-                batch.purchasedAmountCents = toCents(newAmount);
-                await put('cashBatches', batch);
-                await render();
+                // Build currency options
+                const currencyOptions = allCurrencies.map(c => `<option value="${c}"${c === batch.currency ? ' selected' : ''}>${c}</option>`).join('');
+
+                // Inject inline editor controls
+                li.innerHTML = `
+                    <div class="cash-edit-row" style="display:flex; gap:.5rem; align-items:center;">
+                      <input class="edit-cash-date" type="date" value="${batch.date}" style="width:9.5rem;" />
+                      <select class="edit-cash-currency">${currencyOptions}</select>
+                      <input class="edit-cash-rate" type="number" step="0.0001" value="${(batch.ratePpm / PPM).toFixed(6)}" style="width:9.5rem;" />
+                      <input class="edit-cash-amount" type="number" step="0.01" value="${(batch.purchasedAmountCents / 100).toFixed(2)}" style="width:6.5rem;" />
+                      <span class="actions">
+                        <button class="saveCashBtn" type="button">Save</button>
+                        <button class="cancelCashBtn" type="button">Cancel</button>
+                      </span>
+                    </div>`;
+
+                // Wire cancel
+                li.querySelector('.cancelCashBtn').addEventListener('click', () => {
+                    li.innerHTML = originalHtml;
+                });
+
+                // Wire save
+                li.querySelector('.saveCashBtn').addEventListener('click', async (ev) => {
+                    const btn = ev.target;
+                    btn.disabled = true;
+                    try {
+                        const newDate = li.querySelector('.edit-cash-date').value;
+                        const newCurrency = li.querySelector('.edit-cash-currency').value;
+                        const newRate = li.querySelector('.edit-cash-rate').value;
+                        const newAmount = li.querySelector('.edit-cash-amount').value;
+
+                        // Basic validation
+                        if (!newDate || !newCurrency || isNaN(Number(newRate)) || isNaN(Number(newAmount))) {
+                            alert('Invalid input. Please check date, currency, rate, and amount.');
+                            btn.disabled = false;
+                            return;
+                        }
+
+                        batch.date = newDate.trim();
+                        batch.currency = newCurrency.trim().toUpperCase();
+                        batch.ratePpm = rateToPpm(newRate);
+                        batch.purchasedAmountCents = toCents(newAmount);
+
+                        await put('cashBatches', batch);
+                        await render();
+                    } catch (err) {
+                        alert('Save failed: ' + (err.message || err));
+                        btn.disabled = false;
+                    }
+                });
             } catch (err) {
                 alert('Edit failed: ' + (err.message || err));
             }
