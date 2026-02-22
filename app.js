@@ -258,7 +258,13 @@ async function addExpense({ date, currency, method, categoryId, description, amo
         }
         fxRatePpm = result.ppm;
         fxSource = result.source;
-        const eff = applyFeePpm(fxRatePpm, settings.ccFeePercent ?? 2.5);
+
+        // If the FX source is 'identity' (from == homeCurrency), ignore the credit-card fee.
+        // Otherwise apply the configured cc fee.
+        const eff = (fxSource === 'identity')
+            ? fxRatePpm
+            : applyFeePpm(fxRatePpm, settings.ccFeePercent ?? 2.5);
+
         baseAmountCents = Math.round(amountLocalCents * eff / PPM);
     }
 
