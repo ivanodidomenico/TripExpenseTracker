@@ -990,7 +990,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await render();
     });
 
-    // Cash batch list actions (edit/delete) - inline editor
+    // Cash batch list actions (edit/delete) - inline editor with horizontal scroll container
     document.getElementById('cashBatchesList').addEventListener('click', async (e) => {
         const li = e.target.closest('li[data-id]');
         if (!li) return;
@@ -1020,17 +1020,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Build currency options
                 const currencyOptions = allCurrencies.map(c => `<option value="${c}"${c === batch.currency ? ' selected' : ''}>${c}</option>`).join('');
 
-                // Inject inline editor controls
+                // Inject inline editor controls wrapped in a horizontally scrollable container.
+                // The inner `.cash-edit-row` uses inline-flex with a minimum width so on narrow screens
+                // the user can horizontally scroll the editor rather than having the inputs wrap/congest.
                 li.innerHTML = `
-                    <div class="cash-edit-row" style="display:flex; gap:.5rem; align-items:center;">
-                      <input class="edit-cash-date" type="date" value="${batch.date}" style="width:9.5rem;" />
-                      <select class="edit-cash-currency">${currencyOptions}</select>
-                      <input class="edit-cash-rate" type="number" step="0.0001" value="${(batch.ratePpm / PPM).toFixed(6)}" style="width:9.5rem;" />
-                      <input class="edit-cash-amount" type="number" step="0.01" value="${(batch.purchasedAmountCents / 100).toFixed(2)}" style="width:6.5rem;" />
-                      <span class="actions">
-                        <button class="saveCashBtn" type="button">Save</button>
-                        <button class="cancelCashBtn" type="button">Cancel</button>
-                      </span>
+                    <div class="cash-edit-scroll" style="overflow-x:auto;">
+                      <div class="cash-edit-row" style="display:inline-flex; gap:.5rem; align-items:center; min-width:560px; padding:.25rem 0;">
+                        <input class="edit-cash-date" type="date" value="${batch.date}" style="width:9.5rem;" />
+                        <select class="edit-cash-currency">${currencyOptions}</select>
+                        <input class="edit-cash-rate" type="number" step="0.0001" value="${(batch.ratePpm / PPM).toFixed(6)}" style="width:9.5rem;" />
+                        <input class="edit-cash-amount" type="number" step="0.01" value="${(batch.purchasedAmountCents / 100).toFixed(2)}" style="width:6.5rem;" />
+                        <span class="actions" style="margin-left:.5rem;">
+                          <button class="saveCashBtn" type="button">Save</button>
+                          <button class="cancelCashBtn" type="button">Cancel</button>
+                        </span>
+                      </div>
                     </div>`;
 
                 // Wire cancel
