@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b74de" />
+    <meta name="description" content="Track trip expenses with automatic FX conversion" />
     <title>Trip Expense Tracker</title>
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/icon-192.png" sizes="192x192" />
@@ -11,64 +12,104 @@
     <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-    <h1>Trip Expense Tracker</h1>
+    <!-- App header -->
+    <header class="app-header">
+        <h1>✈️ Trip Expense Tracker</h1>
+        <span id="onlineStatus" class="status-badge online" title="Connection status">● Online</span>
+    </header>
 
     <!-- Trip selector -->
     <div class="trip-bar">
         <label for="tripSelector"><strong>Trip:</strong></label>
-        <select id="tripSelector"></select>
-        <button id="newTripBtn" type="button">+ New Trip</button>
-        <button id="renameTripBtn" type="button">Rename</button>
-        <button id="deleteTripBtn" type="button" class="danger-btn">Delete Trip</button>
+        <select id="tripSelector" aria-label="Select trip"></select>
+        <button id="newTripBtn" type="button" class="btn btn-outline" title="Create a new trip">+ New Trip</button>
+        <button id="renameTripBtn" type="button" class="btn btn-ghost" title="Rename current trip">✏️ Rename</button>
+        <button id="deleteTripBtn" type="button" class="btn danger-btn" title="Delete current trip">🗑️ Delete</button>
     </div>
 
     <!-- Tab navigation -->
-    <nav class="tab-nav">
-        <button class="tab-btn active" data-page="expense">Add Expense</button>
-        <button class="tab-btn" data-page="summary">Summary</button>
-        <button class="tab-btn" data-page="settings">Settings</button>
+    <nav class="tab-nav" role="tablist" aria-label="Main sections">
+        <button class="tab-btn active" data-page="expense" role="tab" aria-selected="true">
+            <span class="tab-icon">💳</span> Add Expense
+        </button>
+        <button class="tab-btn" data-page="summary" role="tab" aria-selected="false">
+            <span class="tab-icon">📊</span> Summary
+        </button>
+        <button class="tab-btn" data-page="settings" role="tab" aria-selected="false">
+            <span class="tab-icon">⚙️</span> Settings
+        </button>
     </nav>
 
     <!-- ==================== PAGE: Add Expense ==================== -->
-    <section id="page-expense" class="page active">
-        <div class="box">
+    <section id="page-expense" class="page active" role="tabpanel">
+        <div class="box card-elevated">
             <h2>Add Expense</h2>
             <form id="expenseForm">
-                <div>
-                    <label>Date</label>
+                <div class="form-group">
+                    <label for="date">Date</label>
                     <input id="date" type="date" required />
                 </div>
-                <div>
-                    <label>Currency</label>
+                <div class="form-group">
+                    <label for="currency">Currency</label>
                     <select id="currency"></select>
                 </div>
-                <div>
-                    <label>Method</label>
+                <div class="form-group">
+                    <label for="method">Method</label>
                     <select id="method">
-                        <option value="credit">Credit</option>
-                        <option value="cash">Cash</option>
+                        <option value="credit">💳 Credit</option>
+                        <option value="cash">💵 Cash</option>
                     </select>
                 </div>
-                <div>
-                    <label>Category</label>
+                <div class="form-group">
+                    <label for="category">Category</label>
                     <select id="category"></select>
                 </div>
-                <div>
-                    <label>Amount (local)</label>
-                    <input id="amount" type="number" step="0.01" required />
+                <div class="form-group">
+                    <label for="amount">Amount (local)</label>
+                    <input id="amount" type="number" step="0.01" min="0" required placeholder="0.00" />
                 </div>
-                <div style="grid-column: 1 / -1;">
-                    <label>Description</label>
-                    <textarea id="description" rows="2" placeholder="Optional"></textarea>
+                <div class="form-group full-width">
+                    <label for="description">Description</label>
+                    <textarea id="description" rows="2" placeholder="What was this expense for?"></textarea>
                 </div>
-                <div><button>Add Expense</button></div>
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary btn-lg">➕ Add Expense</button>
+                </div>
             </form>
         </div>
     </section>
 
     <!-- ==================== PAGE: Summary ==================== -->
-    <section id="page-summary" class="page">
-        <div class="box">
+    <section id="page-summary" class="page" role="tabpanel">
+        <div class="box card-elevated">
+            <h2>📋 Filters</h2>
+            <form id="filterForm">
+                <div class="form-group">
+                    <label for="startDate">Start date</label>
+                    <input id="startDate" type="date" />
+                </div>
+                <div class="form-group">
+                    <label for="endDate">End date</label>
+                    <input id="endDate" type="date" />
+                </div>
+                <div class="form-group">
+                    <label for="summaryCurrency">Show in currency</label>
+                    <select id="summaryCurrency"></select>
+                </div>
+                <div class="form-group flex">
+                    <button type="submit" class="btn btn-primary">Apply</button>
+                    <button type="button" id="resetFilters" class="btn btn-ghost">Reset</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Grand total card -->
+        <div class="box total-card">
+            <div class="total-label">Trip Total</div>
+            <div class="total-value" id="summaryOutput">—</div>
+        </div>
+
+        <div class="box card-elevated">
             <h2>By Category</h2>
             <table class="table">
                 <thead>
@@ -82,39 +123,13 @@
             <div class="muted">Category totals respect your date range and display currency.</div>
         </div>
 
-        <div class="box">
-            <h2>Filters &amp; Summary</h2>
-            <form id="filterForm">
-                <div>
-                    <label>Start date</label>
-                    <input id="startDate" type="date" />
-                </div>
-                <div>
-                    <label>End date</label>
-                    <input id="endDate" type="date" />
-                </div>
-                <div>
-                    <label>Show in currency</label>
-                    <select id="summaryCurrency"></select>
-                </div>
-                <div class="flex">
-                    <button type="submit">Apply</button>
-                    <button type="button" id="resetFilters">Reset</button>
-                </div>
-            </form>
-            <div class="flex" style="margin-top:.5rem;">
-                <strong>Total:</strong>
-                <span id="summaryOutput"></span>
-            </div>
-        </div>
-
-        <div class="box">
+        <div class="box card-elevated">
             <h2>Expenses</h2>
             <div class="muted" style="margin-bottom:.5rem;">
-                FX source: 🌐 Frankfurter &nbsp; 💵 Cash Batch
+                FX source: 🌐 Frankfurter &nbsp; 💵 Cash Batch &nbsp; ⏳ Pending
             </div>
             <div style="overflow-x:auto;">
-                <table class="table">
+                <table class="table table-striped">
                     <thead>
                         <tr>
                             <th>Date</th>
@@ -131,81 +146,91 @@
                 </table>
             </div>
         </div>
-
     </section>
 
     <!-- ==================== PAGE: Settings ==================== -->
-    <section id="page-settings" class="page">
-        <div class="box">
-            <h2>Settings</h2>
+    <section id="page-settings" class="page" role="tabpanel">
+        <div class="box card-elevated">
+            <h2>⚙️ Settings</h2>
             <form id="settingsForm">
-                <div>
-                    <label>Home currency (base)</label>
+                <div class="form-group">
+                    <label for="homeCurrency">Home currency (base)</label>
                     <input id="homeCurrency" placeholder="CAD" required />
+                    <span class="field-hint">Your base currency for all conversions</span>
                 </div>
-                <div>
-                    <label>Trip currencies (local)</label>
+                <div class="form-group">
+                    <label for="tripCurrencies">Trip currencies (local)</label>
                     <input id="tripCurrencies" placeholder="EUR, GBP" required />
+                    <span class="field-hint">Comma-separated currencies used on this trip</span>
                 </div>
-                <div>
-                    <label>Credit card fee (%)</label>
+                <div class="form-group">
+                    <label for="ccFee">Credit card fee (%)</label>
                     <input id="ccFee" type="number" step="0.1" min="0" value="2.5" required />
+                    <span class="field-hint">Foreign transaction fee applied to credit purchases</span>
                 </div>
-                <div><button type="submit">Save</button></div>
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+                </div>
             </form>
-            <div class="muted">Tip: Home currency is your base (e.g., CAD). Trip currencies are local currencies used on this trip (comma-separated).</div>
         </div>
 
-        <div class="row">
-            <div class="box">
-                <h2>Categories</h2>
-                <div class="flex" style="margin-bottom:.5rem;">
-                    <input id="newCategoryName" placeholder="e.g., Meals" />
-                    <button id="addCategory" type="button">+ Add category</button>
-                </div>
-                <table class="table">
-                    <thead><tr><th>Name</th><th>Used</th><th>Actions</th></tr></thead>
-                    <tbody id="categoriesTbody"></tbody>
-                </table>
-                <div class="muted">Delete will be blocked if a category is used. You can reassign its expenses to another category, then delete.</div>
+        <div class="box card-elevated">
+            <h2>🏷️ Categories</h2>
+            <div class="flex" style="margin-bottom:.75rem;">
+                <input id="newCategoryName" placeholder="e.g., Meals" aria-label="New category name" />
+                <button id="addCategory" type="button" class="btn btn-outline">+ Add category</button>
             </div>
+            <table class="table">
+                <thead><tr><th>Name</th><th>Used</th><th>Actions</th></tr></thead>
+                <tbody id="categoriesTbody"></tbody>
+            </table>
+            <div class="muted">Delete is blocked if a category is in use. Reassign its expenses first.</div>
         </div>
 
-        <div class="box">
-            <h2>Cash Batches</h2>
+        <div class="box card-elevated">
+            <h2>💰 Cash Batches</h2>
             <form id="cashForm">
-                <div>
-                    <label>Date bought</label>
+                <div class="form-group">
+                    <label for="cashDate">Date bought</label>
                     <input id="cashDate" type="date" required />
                 </div>
-                <div>
-                    <label>Currency</label>
+                <div class="form-group">
+                    <label for="cashCurrency">Currency</label>
                     <select id="cashCurrency" required></select>
                 </div>
-                <div>
-                    <label>Rate (1 unit → home)</label>
-                    <input id="cashRate" type="number" step="0.0001" required />
+                <div class="form-group">
+                    <label for="cashRate">Rate (1 unit → home)</label>
+                    <input id="cashRate" type="number" step="0.0001" required placeholder="1.3500" />
                 </div>
-                <div>
-                    <label>Amount (local)</label>
-                    <input id="cashAmount" type="number" step="0.01" required />
+                <div class="form-group">
+                    <label for="cashAmount">Amount (local)</label>
+                    <input id="cashAmount" type="number" step="0.01" required placeholder="0.00" />
                 </div>
-                <div><button>Add Cash Batch</button></div>
+                <div class="form-group">
+                    <button class="btn btn-primary">Add Cash Batch</button>
+                </div>
             </form>
-            <ul id="cashBatchesList"></ul>
+            <ul id="cashBatchesList" class="cash-list"></ul>
         </div>
 
         <!-- Backup & Restore -->
-        <div class="box">
-            <h2>Backup &amp; Restore</h2>
-            <div class="flex" style="margin-bottom:.5rem; align-items:center;">
-                <button id="exportBackupBtn" type="button">Export Backup (JSON)</button>
-                <input id="importFile" type="file" accept="application/json" style="margin-left:.5rem;" />
-                <button id="importBackupBtn" type="button" style="margin-left:.25rem;">Import Backup</button>
+        <div class="box card-elevated">
+            <h2>📦 Backup &amp; Restore</h2>
+            <div class="flex" style="margin-bottom:.75rem; align-items:center;">
+                <button id="exportBackupBtn" type="button" class="btn btn-outline">⬇️ Export Backup</button>
+                <label class="file-upload-label btn btn-ghost" for="importFile">
+                    📁 Choose file…
+                    <input id="importFile" type="file" accept="application/json" class="sr-only" />
+                </label>
+                <span id="importFileName" class="muted"></span>
+                <button id="importBackupBtn" type="button" class="btn btn-outline">⬆️ Import</button>
             </div>
-            <div class="muted">Export creates a single JSON file containing all trips, settings, categories, expenses, fxRates, and cash batches. Import will merge and overwrite records with the same ids or optionally wipe and replace existing data.</div>
+            <div class="muted">Export creates a JSON file with all your data. Import will merge or replace existing data.</div>
         </div>
     </section>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast" aria-live="polite"></div>
 
     <script type="module" src="app.js"></script>
 </body>

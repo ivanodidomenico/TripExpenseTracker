@@ -713,7 +713,7 @@ async function importBackupFile(file) {
         }
 
         await render();
-        alert('Import complete.');
+        alert('Import complete ✓');
     } catch (err) {
         throw new Error('Import failed: ' + (err.message || err));
     }
@@ -746,6 +746,27 @@ async function syncPendingExpenses() {
         await render();
     } catch {
         // top-level ignore
+    }
+}
+
+// ---------- Toast notifications ----------
+function showToast(message, type = 'success', duration = 2500) {
+    const el = document.getElementById('toast');
+    el.textContent = message;
+    el.className = 'toast ' + type + ' show';
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => { el.className = 'toast'; }, duration);
+}
+
+// ---------- Online/offline indicator ----------
+function updateOnlineStatus() {
+    const badge = document.getElementById('onlineStatus');
+    if (navigator.onLine) {
+        badge.textContent = '● Online';
+        badge.className = 'status-badge online';
+    } else {
+        badge.textContent = '● Offline';
+        badge.className = 'status-badge offline';
     }
 }
 
@@ -826,6 +847,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             tripCurrencies,
             ccFeePercent: Number(document.getElementById('ccFee').value)
         });
+        showToast('Settings saved ✓');
         await render();
     });
 
@@ -1094,6 +1116,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('date').value = today();
             const settings = await loadSettings();
             document.getElementById('currency').value = settings.tripCurrencies[0];
+            showToast('Expense added ✓');
             await render();
         } catch (err) {
             alert(err.message);
@@ -1119,6 +1142,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             alert(err.message || err);
         }
     });
+    document.getElementById('importFile').addEventListener('change', (e) => {
+        const name = e.target.files[0]?.name || '';
+        document.getElementById('importFileName').textContent = name;
+    });
 
     // Default initial values
     document.getElementById('cashDate').value = today();
@@ -1142,4 +1169,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js');
     }
+
+    updateOnlineStatus();
+    window.addEventListener('online', updateOnlineStatus);
+    window.addEventListener('offline', updateOnlineStatus);
 });
