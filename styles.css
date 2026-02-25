@@ -496,7 +496,7 @@ textarea {
     }
 
     .tab-icon {
-        display: none;
+        display: inline-block;
     }
 
     .trip-bar {
