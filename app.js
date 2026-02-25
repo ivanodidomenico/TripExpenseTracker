@@ -250,12 +250,20 @@ async function addExpense({ date, currency, method, categoryId, description, amo
     let fxSource = 'frankfurter';
 
     if (method === 'cash') {
-        const batch = await pickCashBatchFor(date, currency);
-        if (!batch) throw new Error(`No cash batch found for ${currency} on or before ${date}. Add a cash batch first.`);
-        cashBatchId = batch.id;
-        fxRatePpm = batch.ratePpm;
-        fxSource = 'cashBatch';
-        baseAmountCents = Math.round(amountLocalCents * batch.ratePpm / PPM);
+        // If paying cash in the trip's home currency, don't require a cash batch.
+        if (currency === (settings.homeCurrency || '').toUpperCase()) {
+            fxRatePpm = PPM;
+            fxSource = 'identity';
+            baseAmountCents = amountLocalCents;
+            cashBatchId = null;
+        } else {
+            const batch = await pickCashBatchFor(date, currency);
+            if (!batch) throw new Error(`No cash batch found for ${currency} on or before ${date}. Add a cash batch first.`);
+            cashBatchId = batch.id;
+            fxRatePpm = batch.ratePpm;
+            fxSource = 'cashBatch';
+            baseAmountCents = Math.round(amountLocalCents * batch.ratePpm / PPM);
+        }
     } else {
         // Try to get rate (cache-first). If we cannot obtain a rate and are offline,
         // create the expense in a "pending" state (no conversion yet). When the app
@@ -333,12 +341,20 @@ async function updateExpense(id, { date, currency, method, categoryId, descripti
     let fxSource = 'frankfurter';
 
     if (method === 'cash') {
-        const batch = await pickCashBatchFor(date, exp.currency);
-        if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${date}. Add a cash batch first.`);
-        cashBatchId = batch.id;
-        fxRatePpm = batch.ratePpm;
-        fxSource = 'cashBatch';
-        baseAmountCents = Math.round(exp.amountLocalCents * batch.ratePpm / PPM);
+        // Allow cash in home currency without a cash batch.
+        if (exp.currency === (settings.homeCurrency || '').toUpperCase()) {
+            fxRatePpm = PPM;
+            fxSource = 'identity';
+            baseAmountCents = exp.amountLocalCents;
+            cashBatchId = null;
+        } else {
+            const batch = await pickCashBatchFor(date, exp.currency);
+            if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${date}. Add a cash batch first.`);
+            cashBatchId = batch.id;
+            fxRatePpm = batch.ratePpm;
+            fxSource = 'cashBatch';
+            baseAmountCents = Math.round(exp.amountLocalCents * batch.ratePpm / PPM);
+        }
     } else {
         let result = await getOrFetchRate(date, exp.currency);
         if (!result) {
