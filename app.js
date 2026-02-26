@@ -938,14 +938,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('date').value = today();
 
-    // --- Photo preview + OCR on the Add Expense form ---
+        // --- Photo preview + OCR on the Add Expense form ---
     document.getElementById('expensePhoto').addEventListener('change', async (e) => {
         const preview = document.getElementById('photoPreview');
         const file = e.target.files && e.target.files[0];
         if (!file) { preview.innerHTML = ''; setOcrStatus('hidden'); return; }
         try {
             const dataUrl = await readAndResizePhoto(file);
-            preview.innerHTML = `<img src="${dataUrl}" alt="Preview" /><button type="button" class="remove-photo" title="Remove photo">✕</button>`;
+            preview.innerHTML = `<img src="${dataUrl}" alt="Preview" title="Click to enlarge" /><button type="button" class="remove-photo" title="Remove photo">✕</button>`;
+            preview.querySelector('img').addEventListener('click', () => openLightbox(dataUrl));
             preview.querySelector('.remove-photo').addEventListener('click', () => {
                 document.getElementById('expensePhoto').value = '';
                 preview.innerHTML = '';
