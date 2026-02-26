@@ -30,11 +30,21 @@
     box-sizing: border-box;
 }
 
+html {
+    /* Prevent pull-to-refresh in standalone PWA on iOS */
+    overscroll-behavior-y: contain;
+}
+
 body {
     font-family: var(--font-family);
     margin: 0 auto;
     max-width: 960px;
     padding: 0 1rem 2rem;
+    /* Safe area insets for notch/Dynamic Island iPhones */
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-bottom: max(2rem, env(safe-area-inset-bottom));
+    padding-top: env(safe-area-inset-top);
     background: var(--color-bg);
     color: var(--color-text);
     line-height: 1.5;
@@ -460,7 +470,7 @@ textarea {
 /* ===== Toast notification ===== */
 .toast {
     position: fixed;
-    bottom: 1.5rem;
+    bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%) translateY(120%);
     background: var(--color-text);
@@ -593,6 +603,8 @@ textarea {
     align-items: center;
     justify-content: center;
     z-index: 10000;
+    /* Respect safe areas on iPhone */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
     .lightbox-overlay[hidden] {
