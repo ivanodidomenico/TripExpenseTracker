@@ -1,5 +1,5 @@
 export const DB_NAME = 'tripx';
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 function openDB() {
     return new Promise((resolve, reject) => {
@@ -48,6 +48,11 @@ function openDB() {
 
             if (!db.objectStoreNames.contains('trips')) {
                 db.createObjectStore('trips', { keyPath: 'id' });
+            }
+
+            // Photo store: one photo per expense, keyed by expense id
+            if (!db.objectStoreNames.contains('photos')) {
+                db.createObjectStore('photos', { keyPath: 'expenseId' });
             }
 
             // One-time cleanup for legacy records:
