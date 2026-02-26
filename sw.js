@@ -60,4 +60,22 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
+
+  // For external API requests (e.g., Frankfurter): network-first with timeout
+  // Prevents silent hangs on Android when the network is flaky
+  e.respondWith(
+    Promise.race([
+      fetch(e.request),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Network timeout')), 10000)
+      )
+    ]).catch(() =>
+      caches.match(e.request).then(cached =>
+        cached || new Response(JSON.stringify({ error: 'offline' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      )
+    )
+  );
 });

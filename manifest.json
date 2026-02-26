@@ -1,21 +1,35 @@
 {
   "name": "Trip Expense Tracker",
   "short_name": "TripX",
+  "id": "/TripExpenseTracker/",
   "start_url": "/TripExpenseTracker/",
   "scope": "/TripExpenseTracker/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#0b74de",
+  "description": "Track trip expenses with automatic FX conversion, receipt OCR, and multi-currency support.",
+  "categories": [
+    "finance",
+    "travel"
+  ],
   "icons": [
     {
       "src": "icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
       "src": "icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
