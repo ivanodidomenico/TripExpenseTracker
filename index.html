@@ -27,9 +27,17 @@
     <div class="trip-bar">
         <label for="tripSelector"><strong>Trip:</strong></label>
         <select id="tripSelector" aria-label="Select trip"></select>
-        <button id="newTripBtn" type="button" class="btn btn-outline" title="Create a new trip">+ New Trip</button>
-        <button id="renameTripBtn" type="button" class="btn btn-ghost" title="Rename current trip">✏️ Rename</button>
-        <button id="deleteTripBtn" type="button" class="btn danger-btn" title="Delete current trip">🗑️ Delete</button>
+        <button id="newTripBtn" type="button" class="btn btn-outline btn-sm" title="Create a new trip">+ New</button>
+        <button id="renameTripBtn" type="button" class="btn btn-ghost btn-sm" title="Rename current trip">✏️</button>
+        <button id="deleteTripBtn" type="button" class="btn danger-btn btn-sm" title="Delete current trip">🗑️</button>
+    </div>
+
+    <!-- Live FX rates -->
+    <div id="fxRatesBar" class="fx-rates-bar">
+        <span class="fx-rates-label">💱 Rates:</span>
+        <span id="fxRatesChips" class="fx-rates-chips">
+            <span class="muted">Loading…</span>
+        </span>
     </div>
 
     <!-- Tab navigation -->

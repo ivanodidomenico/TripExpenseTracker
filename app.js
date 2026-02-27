@@ -645,6 +645,35 @@ async function renderTripSelector() {
     if (current) document.title = `${current.name} — Trip Expense Tracker`;
 }
 
+async function renderLiveRates() {
+    const container = document.getElementById('fxRatesChips');
+    const bar = document.getElementById('fxRatesBar');
+    if (!container || !bar) return;
+    try {
+        const settings = await loadSettings();
+        const home = settings.homeCurrency.toUpperCase();
+        const foreign = (settings.tripCurrencies || []).filter(c => c.toUpperCase() !== home);
+        if (!foreign.length) {
+            bar.hidden = true;
+            return;
+        }
+        bar.hidden = false;
+        const chips = [];
+        for (const cur of foreign) {
+            const result = await getOrFetchRate(today(), cur);
+            if (result) {
+                const rate = (result.ppm / PPM).toFixed(4);
+                chips.push(`<span class="rate-chip">1 ${cur} = <span class="rate-value">${rate}</span> ${home}</span>`);
+            } else {
+                chips.push(`<span class="rate-chip" style="opacity:.5">1 ${cur} = <span class="rate-value">—</span> ${home}</span>`);
+            }
+        }
+        container.innerHTML = chips.join('');
+    } catch {
+        container.innerHTML = '<span class="muted">Unable to load rates</span>';
+    }
+}
+
 async function render() {
     await renderTripSelector();
     const settings = await loadSettings();
@@ -733,6 +762,7 @@ async function render() {
 
     await renderCategorySummary(exps, cats, displayCurrency, endDate, settings.homeCurrency);
     await renderCategoryManagement(cats);
+    await renderLiveRates();
 }
 
 // ---------- Inline expense editor helper ----------
