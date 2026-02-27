@@ -7,8 +7,42 @@ const toCents = (n) => Math.round(Number(n) * 100);
 const fromCents = (c) => (c / 100).toFixed(2);
 const rateToPpm = (rateStr) => Math.round(Number(rateStr) * PPM);
 const applyFeePpm = (ppm, feePercent) => Math.round(ppm * (1 + feePercent / 100));
-const today = () => new Date().toISOString().slice(0, 10);
 const $ = (sel) => document.querySelector(sel);
+
+// ---------- Date helpers (UTC storage ↔ local display) ----------
+
+/** Returns today's date as a UTC YYYY-MM-DD string (for DB storage / FX lookups). */
+const todayUTC = () => new Date().toISOString().slice(0, 10);
+
+/** Returns today's date as a local YYYY-MM-DD string (for UI display / date inputs). */
+const todayLocal = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * Convert a local YYYY-MM-DD string (from a date input) to a UTC YYYY-MM-DD string.
+ * An <input type="date"> value represents a calendar date with no time zone.
+ * We treat it as local midnight and extract the UTC date from that instant.
+ */
+function localDateToUTC(localDateStr) {
+    if (!localDateStr) return null;
+    const [y, m, d] = localDateStr.split('-').map(Number);
+    // Construct as local midnight
+    const dt = new Date(y, m - 1, d);
+    return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Convert a UTC YYYY-MM-DD string (from the DB) to a local YYYY-MM-DD string for display.
+ * We parse as UTC midnight and format in the user's local time zone.
+ */
+function utcDateToLocal(utcDateStr) {
+    if (!utcDateStr) return '';
+    // new Date('2026-03-04') parses as UTC midnight
+    const dt = new Date(utcDateStr + 'T00:00:00Z');
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
 
 // ---------- Photo helpers ----------
 const MAX_PHOTO_WIDTH = 1200;
@@ -331,7 +365,7 @@ async function fetchAndCacheRate(dateStr, currency) {
         const to = settings.homeCurrency.toUpperCase();
         const from = currency.toUpperCase();
         if (from === to) {
-            const effectiveDate = dateStr || today();
+            const effectiveDate = dateStr || todayUTC();
             const ppm = PPM;
             await upsertFxRate(effectiveDate, from, ppm);
             return { ppm, source: 'identity' };
@@ -414,7 +448,7 @@ async function addExpense({ date, currency, method, categoryId, description, amo
             cashBatchId = null;
         } else {
             const batch = await pickCashBatchFor(date, currency);
-            if (!batch) throw new Error(`No cash batch found for ${currency} on or before ${date}. Add a cash batch first.`);
+            if (!batch) throw new Error(`No cash batch found for ${currency} on or before ${utcDateToLocal(date)}. Add a cash batch first.`);
             cashBatchId = batch.id;
             fxRatePpm = batch.ratePpm;
             fxSource = 'cashBatch';
@@ -435,7 +469,7 @@ async function addExpense({ date, currency, method, categoryId, description, amo
                     if (fxRow && fxRow.rates[currency]) result = { ppm: fxRow.rates[currency], source: 'frankfurter' };
                 }
                 if (!result) {
-                    throw new Error(`Unable to fetch FX rate for ${currency} on ${date}. Check your internet connection and try again.`);
+                    throw new Error(`Unable to fetch FX rate for ${currency} on ${utcDateToLocal(date)}. Check your internet connection and try again.`);
                 }
             }
         }
@@ -491,7 +525,7 @@ async function updateExpense(id, { date, currency, method, categoryId, descripti
             cashBatchId = null;
         } else {
             const batch = await pickCashBatchFor(date, exp.currency);
-            if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${date}. Add a cash batch first.`);
+            if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${utcDateToLocal(date)}. Add a cash batch first.`);
             cashBatchId = batch.id;
             fxRatePpm = batch.ratePpm;
             fxSource = 'cashBatch';
@@ -511,7 +545,7 @@ async function updateExpense(id, { date, currency, method, categoryId, descripti
                     const fxRow = await getFxRowAtOrBefore(date);
                     if (fxRow && fxRow.rates[exp.currency]) result = { ppm: fxRow.rates[exp.currency], source: 'frankfurter' };
                 }
-                if (!result) throw new Error(`Unable to fetch FX rate for ${exp.currency} on ${date}.`);
+                if (!result) throw new Error(`Unable to fetch FX rate for ${exp.currency} on ${utcDateToLocal(date)}.`);
             }
         }
         if (result) {
@@ -565,7 +599,7 @@ async function convertBaseToTargetCents(baseCents, targetCurrency, endDate) {
     const home = settings.homeCurrency.toUpperCase();
     targetCurrency = targetCurrency.toUpperCase();
     if (targetCurrency === home) return baseCents;
-    const result = await getOrFetchRate(endDate || today(), targetCurrency);
+    const result = await getOrFetchRate(endDate || todayUTC(), targetCurrency);
     if (!result) throw new Error(`Unable to fetch FX rate for ${targetCurrency}. Check your internet connection.`);
     const homeToTargetPpm = Math.round(PPM / (result.ppm / PPM));
     return Math.round(baseCents * homeToTargetPpm / PPM);
@@ -660,7 +694,7 @@ async function renderLiveRates() {
         bar.hidden = false;
         const chips = [];
         for (const cur of foreign) {
-            const result = await getOrFetchRate(today(), cur);
+            const result = await getOrFetchRate(todayUTC(), cur);
             if (result) {
                 const rate = (result.ppm / PPM).toFixed(4);
                 chips.push(`<span class="rate-chip">1 ${cur} = <span class="rate-value">${rate}</span> ${home}</span>`);
@@ -702,7 +736,7 @@ async function render() {
     const batches = await indexGetAllKey('cashBatches', 'byTrip', getActiveTripId());
     $('#cashBatchesList').innerHTML = batches
         .sort((a, b) => new Date(b.date) - new Date(a.date))
-        .map(b => `<li data-id="${b.id}">${b.date} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${(b.purchasedAmountCents / 100).toFixed(2)} <span class="actions"><button class="editCashBtn" type="button">Edit</button> <button class="deleteCashBtn" type="button">Delete</button></span></li>`)
+        .map(b => `<li data-id="${b.id}">${utcDateToLocal(b.date)} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${(b.purchasedAmountCents / 100).toFixed(2)} <span class="actions"><button class="editCashBtn" type="button">Edit</button> <button class="deleteCashBtn" type="button">Delete</button></span></li>`)
         .join('');
 
     const summaryEl = document.getElementById('summaryCurrency');
@@ -710,8 +744,11 @@ async function render() {
     summaryEl.innerHTML = allDisplayCurrencies.map(c => `<option value="${c}">${c}</option>`).join('');
     summaryEl.value = allDisplayCurrencies.includes(prevSummary) ? prevSummary : settings.homeCurrency;
 
-    const startDate = $('#startDate').value || null;
-    const endDate = $('#endDate').value || null;
+    // Filter inputs are local dates; convert to UTC for DB comparison
+    const startDateLocal = $('#startDate').value || null;
+    const endDateLocal = $('#endDate').value || null;
+    const startDate = localDateToUTC(startDateLocal);
+    const endDate = localDateToUTC(endDateLocal);
     const displayCurrency = (summaryEl.value || settings.homeCurrency).toUpperCase();
 
     const exps = (await getExpensesInRange(startDate, endDate))
@@ -739,7 +776,7 @@ async function render() {
                 ? `<img class="expense-thumb" src="${photoUrl}" alt="Receipt" data-photo-id="${e.id}" />`
                 : `<span class="muted">—</span>`;
             return `<tr data-expense-id="${e.id}">
-                <td>${e.date}</td>
+                <td>${utcDateToLocal(e.date)}</td>
                 <td>${catName}</td>
                 <td>${e.method.toUpperCase()}</td>
                 <td>${e.currency} ${(e.amountLocalCents / 100).toFixed(2)}</td>
@@ -827,7 +864,7 @@ async function exportBackup() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `tripx-backup-${today()}.json`;
+        a.download = `tripx-backup-${todayLocal()}.json`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -966,9 +1003,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     initTabs();
     await ensureDefaults();
 
-    document.getElementById('date').value = today();
+    document.getElementById('date').value = todayLocal();
 
-        // --- Photo preview + OCR on the Add Expense form ---
+    // --- Photo preview + OCR on the Add Expense form ---
     document.getElementById('expensePhoto').addEventListener('change', async (e) => {
         const preview = document.getElementById('photoPreview');
         const file = e.target.files && e.target.files[0];
@@ -997,6 +1034,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 let filled = [];
                 if (parsed.date) {
+                    // OCR dates are local (from the receipt), show as-is in the local date input
                     document.getElementById('date').value = parsed.date;
                     filled.push('date');
                 }
@@ -1178,8 +1216,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                        <label style="font-size:.78rem;"><input class="edit-remove-photo" type="checkbox" /> Remove</label>`
                     : `<input class="edit-photo" type="file" accept="image/*" capture="environment" style="width:7rem;" />`;
 
+                // Show the stored UTC date as a local date in the editor
+                const localDate = utcDateToLocal(exp.date);
+
                 tr.innerHTML = `
-                    <td><input class="edit-date" type="date" value="${exp.date}" /></td>
+                    <td><input class="edit-date" type="date" value="${localDate}" /></td>
                     <td><select class="edit-category">${categoryOptions}</select></td>
                     <td><select class="edit-method">${methodOptionsHtml}</select></td>
                     <td>
@@ -1187,7 +1228,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                       <input class="edit-amount" type="number" step="0.01" style="width:6.5rem; margin-left:.5rem;" value="${(exp.amountLocalCents / 100).toFixed(2)}" />
                     </td>
                     <td class="edit-fx">${formatRate(exp.fxRatePpm)}</td>
-                    <td class="edit-base">${exp.baseAmountCents == null ? '<span class="muted">pending</span>' : (exp.baseAmountCents/100).toFixed(2)}</td>
+                    <td class="edit-base">${exp.baseAmountCents == null ? '<span class="muted">pending</span>' : (exp.baseAmountCents / 100).toFixed(2)}</td>
                     <td><input class="edit-desc" type="text" value="${(exp.description || '').replace(/"/g, '&quot;')}" /></td>
                     <td>${photoEditHtml}</td>
                     <td class="actions">
@@ -1200,7 +1241,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const btn = ev.target;
                     btn.disabled = true;
                     try {
-                        const newDate = tr.querySelector('.edit-date').value;
+                        const newDateLocal = tr.querySelector('.edit-date').value;
                         const newCategoryId = tr.querySelector('.edit-category').value;
                         const newMethod = tr.querySelector('.edit-method').value;
                         const newCurrency = tr.querySelector('.edit-currency').value;
@@ -1211,13 +1252,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const photoFile = photoInput?.files?.[0] || null;
                         const removePhoto = removeCheckbox?.checked || false;
 
-                        if (!newDate || !newCurrency || !newMethod || isNaN(Number(newAmount))) {
+                        if (!newDateLocal || !newCurrency || !newMethod || isNaN(Number(newAmount))) {
                             alert('Invalid input. Please check date, currency, method, and amount.');
                             btn.disabled = false;
                             return;
                         }
+                        // Convert local date input to UTC for storage
+                        const newDateUTC = localDateToUTC(newDateLocal);
                         await updateExpense(id, {
-                            date: newDate,
+                            date: newDateUTC,
                             currency: newCurrency.trim().toUpperCase(),
                             method: newMethod.trim().toLowerCase(),
                             categoryId: newCategoryId,
@@ -1241,13 +1284,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Cash batch add
     document.getElementById('cashForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const date = document.getElementById('cashDate').value;
+        const dateLocal = document.getElementById('cashDate').value;
         const currency = document.getElementById('cashCurrency').value.trim().toUpperCase();
         const rateStr = document.getElementById('cashRate').value;
         const purchased = document.getElementById('cashAmount').value;
-        await addCashBatch({ date, currency, rateStr, purchasedAmount: purchased });
+        // Convert local date input to UTC for storage
+        await addCashBatch({ date: localDateToUTC(dateLocal), currency, rateStr, purchasedAmount: purchased });
         e.target.reset();
-        document.getElementById('cashDate').value = today();
+        document.getElementById('cashDate').value = todayLocal();
         await render();
     });
 
@@ -1272,10 +1316,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const allCurrencies = Array.from(new Set([settings.homeCurrency, ...(settings.tripCurrencies || [])]));
                 const originalHtml = li.innerHTML;
                 const currencyOptions = allCurrencies.map(c => `<option value="${c}"${c === batch.currency ? ' selected' : ''}>${c}</option>`).join('');
+                // Show stored UTC date as local in the editor
+                const localDate = utcDateToLocal(batch.date);
                 li.innerHTML = `
                     <div class="cash-edit-scroll" style="overflow-x:auto;">
                       <div class="cash-edit-row" style="display:inline-flex; gap:.5rem; align-items:center; min-width:560px; padding:.25rem 0;">
-                        <input class="edit-cash-date" type="date" value="${batch.date}" style="width:9.5rem;" />
+                        <input class="edit-cash-date" type="date" value="${localDate}" style="width:9.5rem;" />
                         <select class="edit-cash-currency">${currencyOptions}</select>
                         <input class="edit-cash-rate" type="number" step="0.0001" value="${(batch.ratePpm / PPM).toFixed(6)}" style="width:9.5rem;" />
                         <input class="edit-cash-amount" type="number" step="0.01" value="${(batch.purchasedAmountCents / 100).toFixed(2)}" style="width:6.5rem;" />
@@ -1290,16 +1336,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const btn = ev.target;
                     btn.disabled = true;
                     try {
-                        const newDate = li.querySelector('.edit-cash-date').value;
+                        const newDateLocal = li.querySelector('.edit-cash-date').value;
                         const newCurrency = li.querySelector('.edit-cash-currency').value;
                         const newRate = li.querySelector('.edit-cash-rate').value;
                         const newAmount = li.querySelector('.edit-cash-amount').value;
-                        if (!newDate || !newCurrency || isNaN(Number(newRate)) || isNaN(Number(newAmount))) {
+                        if (!newDateLocal || !newCurrency || isNaN(Number(newRate)) || isNaN(Number(newAmount))) {
                             alert('Invalid input. Please check date, currency, rate, and amount.');
                             btn.disabled = false;
                             return;
                         }
-                        batch.date = newDate.trim();
+                        // Convert local date input to UTC for storage
+                        batch.date = localDateToUTC(newDateLocal);
                         batch.currency = newCurrency.trim().toUpperCase();
                         batch.ratePpm = rateToPpm(newRate);
                         batch.purchasedAmountCents = toCents(newAmount);
@@ -1320,7 +1367,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Expense add
     document.getElementById('expenseForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const date = document.getElementById('date').value;
+        const dateLocal = document.getElementById('date').value;
         const currency = document.getElementById('currency').value.trim().toUpperCase();
         const method = document.getElementById('method').value;
         const categoryId = document.getElementById('category').value;
@@ -1330,9 +1377,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const photoFile = photoInput.files && photoInput.files[0] ? photoInput.files[0] : null;
 
         try {
-            await addExpense({ date, currency, method, categoryId, description, amountLocal, photoFile });
+            // Convert local date input to UTC for storage
+            await addExpense({ date: localDateToUTC(dateLocal), currency, method, categoryId, description, amountLocal, photoFile });
             e.target.reset();
-            document.getElementById('date').value = today();
+            document.getElementById('date').value = todayLocal();
             const settings = await loadSettings();
             document.getElementById('currency').value = settings.tripCurrencies[0];
             document.getElementById('photoPreview').innerHTML = '';
@@ -1364,7 +1412,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Default initial values
-    document.getElementById('cashDate').value = today();
+    document.getElementById('cashDate').value = todayLocal();
     const settings = await loadSettings();
     document.getElementById('currency').value = settings.tripCurrencies[0];
     document.getElementById('cashCurrency').value = settings.tripCurrencies[0];
