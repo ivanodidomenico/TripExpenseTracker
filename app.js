@@ -22,25 +22,22 @@ const todayLocal = () => {
 
 /**
  * Convert a local YYYY-MM-DD string (from a date input) to a UTC YYYY-MM-DD string.
- * An <input type="date"> value represents a calendar date with no time zone.
- * We treat it as local midnight and extract the UTC date from that instant.
+ * Uses local noon to prevent any UTC offset (max ±14h) from shifting the calendar day.
  */
 function localDateToUTC(localDateStr) {
     if (!localDateStr) return null;
     const [y, m, d] = localDateStr.split('-').map(Number);
-    // Construct as local midnight
-    const dt = new Date(y, m - 1, d);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
     return dt.toISOString().slice(0, 10);
 }
 
 /**
  * Convert a UTC YYYY-MM-DD string (from the DB) to a local YYYY-MM-DD string for display.
- * We parse as UTC midnight and format in the user's local time zone.
+ * Uses UTC noon to prevent any UTC offset (max ±14h) from shifting the calendar day.
  */
 function utcDateToLocal(utcDateStr) {
     if (!utcDateStr) return '';
-    // new Date('2026-03-04') parses as UTC midnight
-    const dt = new Date(utcDateStr + 'T00:00:00Z');
+    const dt = new Date(utcDateStr + 'T12:00:00Z');
     return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
