@@ -1209,9 +1209,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 const photoEditHtml = existingPhoto
                     ? `<img class="expense-thumb" src="${existingPhoto.dataUrl}" alt="Current" style="pointer-events:none;" />
-                       <label class="muted" style="cursor:pointer;">Replace: <input class="edit-photo" type="file" accept="image/*" capture="environment" style="width:7rem;" /></label>
+                       <label class="muted" style="cursor:pointer;">Replace: <input class="edit-photo" type="file" accept="image/*" style="width:7rem;" /></label>
                        <label style="font-size:.78rem;"><input class="edit-remove-photo" type="checkbox" /> Remove</label>`
-                    : `<input class="edit-photo" type="file" accept="image/*" capture="environment" style="width:7rem;" />`;
+                    : `<input class="edit-photo" type="file" accept="image/*" style="width:7rem;" />`;
 
                 // Show the stored UTC date as a local date in the editor
                 const localDate = utcDateToLocal(exp.date);
