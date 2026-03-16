@@ -737,3 +737,14 @@ textarea {
 .split-row input[type="number"] { flex: 0 0 7rem; }
 #splitContainer { margin-top: .5rem; padding: .75rem; border: 1px dashed var(--border, #ccc); border-radius: .5rem; background: var(--surface, #fafafa); }
 #splitRemainder { font-size: .9rem; }
+
+/* ===== App footer (version) ===== */
+.app-footer {
+    text-align: center;
+    padding: 1.5rem 0 .5rem;
+    font-size: .72rem;
+    color: var(--color-text-muted);
+    opacity: .5;
+    letter-spacing: .03em;
+    user-select: none;
+}

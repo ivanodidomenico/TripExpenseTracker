@@ -1,4 +1,5 @@
 import { put, get, getAll, del, indexGetAllRange, indexGetAllKey } from './db.js';
+import { APP_VERSION } from './version.js';
 
 // ---------- Money & Rate helpers ----------
 const PPM = 1_000_000;
@@ -1495,8 +1496,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (navigator.onLine) await syncPendingExpenses();
     window.addEventListener('online', async () => { await syncPendingExpenses(); });
 
-    // Register SW
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js');
+    // Display version
+    const versionEl = document.getElementById('appVersion');
+    if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
+
+    // Register SW (as module to support import) and handle updates
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('./sw.js', { type: 'module' }).then(reg => {
+            // Check for updates every 30 minutes
+            setInterval(() => reg.update(), 30 * 60 * 1000);
+        });
+
+        navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data?.type === 'SW_UPDATED') {
+                showToast(`Updated to v${event.data.version}! Tap to reload.`, 'success', 8000);
+                const toast = document.getElementById('toast');
+                toast.style.cursor = 'pointer';
+                toast.addEventListener('click', () => window.location.reload(), { once: true });
+            }
+        });
+    }
 
     updateOnlineStatus();
     window.addEventListener('online', updateOnlineStatus);
