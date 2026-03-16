@@ -1361,6 +1361,45 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
+    // --- Split toggle & live remainder ---
+    document.getElementById('splitToggle').addEventListener('change', async (e) => {
+        const container = document.getElementById('splitContainer');
+        const splitRows = document.getElementById('splitRows');
+        container.hidden = !e.target.checked;
+        if (e.target.checked && splitRows.children.length === 0) {
+            const cats = await listCategories();
+            const selectedCat = document.getElementById('category').value;
+            const totalAmount = parseFloat(document.getElementById('amount').value) || 0;
+            splitRows.innerHTML = createSplitRowHtml(cats, selectedCat, totalAmount > 0 ? totalAmount.toFixed(2) : '');
+            updateSplitRemainder();
+        }
+    });
+
+    document.getElementById('addSplitRow').addEventListener('click', async () => {
+        const cats = await listCategories();
+        const remainder = getRemainder();
+        const splitRows = document.getElementById('splitRows');
+        splitRows.insertAdjacentHTML('beforeend', createSplitRowHtml(cats, '', remainder > 0 ? remainder.toFixed(2) : ''));
+        updateSplitRemainder();
+    });
+
+    // Live update remainder when any split amount changes or a row is removed
+    document.getElementById('splitRows').addEventListener('input', (e) => {
+        if (e.target.classList.contains('split-amount')) updateSplitRemainder();
+    });
+
+    document.getElementById('splitRows').addEventListener('click', (e) => {
+        if (e.target.classList.contains('removeSplitRow')) {
+            e.target.closest('.split-row').remove();
+            updateSplitRemainder();
+        }
+    });
+
+    // Update remainder when the main amount field changes while split is active
+    document.getElementById('amount').addEventListener('input', () => {
+        if (document.getElementById('splitToggle').checked) updateSplitRemainder();
+    });
+
     // Expense add
     document.getElementById('expenseForm').addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -1372,17 +1411,51 @@ document.addEventListener('DOMContentLoaded', async () => {
         const amountLocal = document.getElementById('amount').value;
         const photoInput = document.getElementById('expensePhoto');
         const photoFile = photoInput.files && photoInput.files[0] ? photoInput.files[0] : null;
+        const isSplit = document.getElementById('splitToggle').checked;
 
         try {
-            // Convert local date input to UTC for storage
-            await addExpense({ date: localDateToUTC(dateLocal), currency, method, categoryId, description, amountLocal, photoFile });
+            const dateUTC = localDateToUTC(dateLocal);
+
+            if (isSplit) {
+                const splits = getSplitsFromForm();
+                if (!splits.length) {
+                    alert('Add at least one split row with a category and amount.');
+                    return;
+                }
+                if (!validateSplits(splits, Number(amountLocal))) return;
+
+                // Create one expense per split line
+                let isFirst = true;
+                for (const split of splits) {
+                    await addExpense({
+                        date: dateUTC,
+                        currency,
+                        method,
+                        categoryId: split.categoryId,
+                        description: splits.length > 1
+                            ? `${description} [split ${split.amount.toFixed(2)}]`
+                            : description,
+                        amountLocal: split.amount.toFixed(2),
+                        photoFile: isFirst ? photoFile : null
+                    });
+                    isFirst = false;
+                }
+                showToast(`${splits.length} split expenses added ✓`);
+            } else {
+                await addExpense({ date: dateUTC, currency, method, categoryId, description, amountLocal, photoFile });
+                showToast('Expense added ✓');
+            }
+
             e.target.reset();
             document.getElementById('date').value = todayLocal();
             const settings = await loadSettings();
             document.getElementById('currency').value = settings.tripCurrencies[0];
             document.getElementById('photoPreview').innerHTML = '';
+            document.getElementById('splitContainer').hidden = true;
+            document.getElementById('splitRows').innerHTML = '';
+            document.getElementById('splitWarning').textContent = '';
+            document.getElementById('splitRemainder').textContent = 'Remaining: 0.00';
             setOcrStatus('hidden');
-            showToast('Expense added ✓');
             await render();
         } catch (err) {
             alert(err.message);
@@ -1429,3 +1502,79 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('online', updateOnlineStatus);
     window.addEventListener('offline', updateOnlineStatus);
 });
+
+// ---------- Split helpers ----------
+
+function createSplitRowHtml(categories, selectedCategoryId = '', amount = '') {
+    const options = categories.map(c =>
+        `<option value="${c.id}"${c.id === selectedCategoryId ? ' selected' : ''}>${c.name}</option>`
+    ).join('');
+    return `<div class="split-row" style="display:flex;gap:.5rem;align-items:center;margin-bottom:.35rem;">
+        <select class="split-category">${options}</select>
+        <input class="split-amount" type="number" step="0.01" min="0" placeholder="0.00" value="${amount}" style="width:7rem;" />
+        <button type="button" class="removeSplitRow btn btn-ghost btn-sm" title="Remove">✕</button>
+    </div>`;
+}
+
+function getSplitTotal() {
+    let total = 0;
+    for (const input of document.querySelectorAll('#splitRows .split-amount')) {
+        const val = parseFloat(input.value);
+        if (!isNaN(val)) total += val;
+    }
+    return Math.round(total * 100) / 100;
+}
+
+function updateSplitRemainder() {
+    const totalAmount = parseFloat(document.getElementById('amount').value) || 0;
+    const splitTotal = getSplitTotal();
+    const remainder = Math.round((totalAmount - splitTotal) * 100) / 100;
+    const el = document.getElementById('splitRemainder');
+    const warning = document.getElementById('splitWarning');
+
+    if (el) {
+        el.textContent = `Remaining: ${remainder.toFixed(2)}`;
+        el.style.color = remainder < 0 ? 'var(--danger, #c00)' : remainder === 0 ? 'var(--success, #090)' : '';
+    }
+    if (warning) {
+        if (remainder < 0) {
+            warning.textContent = `Splits exceed total by ${Math.abs(remainder).toFixed(2)}`;
+        } else if (remainder > 0) {
+            warning.textContent = `${remainder.toFixed(2)} still unassigned`;
+        } else {
+            warning.textContent = '';
+        }
+    }
+    return remainder;
+}
+
+function getRemainder() {
+    const totalAmount = parseFloat(document.getElementById('amount').value) || 0;
+    const splitTotal = getSplitTotal();
+    return Math.round((totalAmount - splitTotal) * 100) / 100;
+}
+
+function getSplitsFromForm() {
+    const rows = document.querySelectorAll('#splitRows .split-row');
+    const splits = [];
+    for (const row of rows) {
+        const categoryId = row.querySelector('.split-category').value;
+        const amount = parseFloat(row.querySelector('.split-amount').value);
+        if (categoryId && !isNaN(amount) && amount > 0) {
+            splits.push({ categoryId, amount });
+        }
+    }
+    return splits;
+}
+
+function validateSplits(splits, totalAmount) {
+    const splitTotal = splits.reduce((sum, s) => sum + s.amount, 0);
+    const diff = Math.round(Math.abs(totalAmount - splitTotal) * 100) / 100;
+    if (diff > 0.01) {
+        document.getElementById('splitWarning').textContent =
+            `Split total (${splitTotal.toFixed(2)}) ≠ expense amount (${totalAmount.toFixed(2)}). Difference: ${diff.toFixed(2)}`;
+        return false;
+    }
+    document.getElementById('splitWarning').textContent = '';
+    return true;
+}

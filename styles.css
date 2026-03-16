@@ -731,3 +731,9 @@ textarea {
         padding: 1rem;
     }
 }
+
+/* Split expense rows */
+.split-row select { flex: 1; min-width: 6rem; }
+.split-row input[type="number"] { flex: 0 0 7rem; }
+#splitContainer { margin-top: .5rem; padding: .75rem; border: 1px dashed var(--border, #ccc); border-radius: .5rem; background: var(--surface, #fafafa); }
+#splitRemainder { font-size: .9rem; }

@@ -91,6 +91,22 @@
                     <label for="amount">Amount (local)</label>
                     <input id="amount" type="number" step="0.01" min="0" required placeholder="0.00" />
                 </div>
+
+                <!-- Split expense support -->
+                <div class="form-group full-width">
+                    <label>
+                        <input id="splitToggle" type="checkbox" /> Split across categories
+                    </label>
+                    <div id="splitContainer" hidden>
+                        <div id="splitRows"></div>
+                        <div style="display:flex;gap:.75rem;align-items:center;margin-top:.35rem;">
+                            <button id="addSplitRow" type="button" class="btn btn-outline btn-sm">+ Add split</button>
+                            <strong id="splitRemainder" class="muted">Remaining: 0.00</strong>
+                        </div>
+                        <div id="splitWarning" class="muted" style="color:var(--danger, #c00);margin-top:.25rem;"></div>
+                    </div>
+                </div>
+
                 <div class="form-group full-width">
                     <label for="description">Description</label>
                     <textarea id="description" rows="2" placeholder="What was this expense for?"></textarea>
