@@ -738,6 +738,11 @@ textarea {
 #splitContainer { margin-top: .5rem; padding: .75rem; border: 1px dashed var(--border, #ccc); border-radius: .5rem; background: var(--surface, #fafafa); }
 #splitRemainder { font-size: .9rem; }
 
+/* Inline edit split rows (Summary tab) */
+.edit-split-row select { flex: 1; min-width: 5rem; }
+.edit-split-row input[type="number"] { flex: 0 0 7rem; }
+.edit-split-container { margin-top: .35rem; padding: .5rem; border: 1px dashed var(--color-border, #ccc); border-radius: var(--radius-sm); background: #fafbfc; }
+
 /* ===== App footer (version) ===== */
 .app-footer {
     text-align: center;

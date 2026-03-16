@@ -1219,7 +1219,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 tr.innerHTML = `
                     <td><input class="edit-date" type="date" value="${localDate}" /></td>
-                    <td><select class="edit-category">${categoryOptions}</select></td>
+                    <td>
+                      <div class="edit-cat-normal">
+                        <select class="edit-category">${categoryOptions}</select>
+                        <button class="editSplitBtn btn btn-outline btn-sm" type="button" style="margin-top:.25rem;">✂️ Split</button>
+                      </div>
+                      <div class="edit-split-container" hidden>
+                        <div class="edit-split-rows"></div>
+                        <div style="display:flex;gap:.5rem;align-items:center;margin-top:.25rem;">
+                          <button class="addEditSplitRow btn btn-outline btn-sm" type="button">+ Add</button>
+                          <strong class="edit-split-remainder muted" style="font-size:.82rem;">Remaining: 0.00</strong>
+                        </div>
+                        <div class="edit-split-warning muted" style="color:var(--color-danger, #c00);margin-top:.2rem;font-size:.8rem;"></div>
+                        <button class="cancelEditSplit btn btn-ghost btn-sm" type="button" style="margin-top:.25rem;">Cancel split</button>
+                      </div>
+                    </td>
                     <td><select class="edit-method">${methodOptionsHtml}</select></td>
                     <td>
                       <select class="edit-currency">${currencyOptions}</select>
@@ -1233,6 +1247,58 @@ document.addEventListener('DOMContentLoaded', async () => {
                       <button class="saveExpenseBtn" type="button">Save</button>
                       <button class="cancelExpenseBtn" type="button">Cancel</button>
                     </td>`;
+
+                const splitContainer = tr.querySelector('.edit-split-container');
+                const splitRowsEl = tr.querySelector('.edit-split-rows');
+                let isSplitMode = false;
+
+                // --- Toggle into split mode ---
+                tr.querySelector('.editSplitBtn').addEventListener('click', () => {
+                    isSplitMode = true;
+                    tr.querySelector('.edit-cat-normal').hidden = true;
+                    splitContainer.hidden = false;
+                    const currentCat = tr.querySelector('.edit-category').value;
+                    const currentAmount = tr.querySelector('.edit-amount').value || '';
+                    splitRowsEl.innerHTML = createEditSplitRowHtml(cats, currentCat, currentAmount);
+                    updateEditSplitRemainder(splitContainer, parseFloat(currentAmount) || 0);
+                });
+
+                // --- Cancel split mode ---
+                tr.querySelector('.cancelEditSplit').addEventListener('click', () => {
+                    isSplitMode = false;
+                    splitContainer.hidden = true;
+                    tr.querySelector('.edit-cat-normal').hidden = false;
+                    splitRowsEl.innerHTML = '';
+                });
+
+                // --- Add split row ---
+                tr.querySelector('.addEditSplitRow').addEventListener('click', () => {
+                    const totalAmount = parseFloat(tr.querySelector('.edit-amount').value) || 0;
+                    const splitTotal = getEditSplitTotal(splitContainer);
+                    const remainder = Math.round((totalAmount - splitTotal) * 100) / 100;
+                    splitRowsEl.insertAdjacentHTML('beforeend', createEditSplitRowHtml(cats, '', remainder > 0 ? remainder.toFixed(2) : ''));
+                    updateEditSplitRemainder(splitContainer, totalAmount);
+                });
+
+                // --- Remove split row + live amount updates ---
+                splitContainer.addEventListener('click', (ev) => {
+                    if (ev.target.classList.contains('removeEditSplitRow')) {
+                        ev.target.closest('.edit-split-row').remove();
+                        updateEditSplitRemainder(splitContainer, parseFloat(tr.querySelector('.edit-amount').value) || 0);
+                    }
+                });
+                splitContainer.addEventListener('input', (ev) => {
+                    if (ev.target.classList.contains('edit-split-amount')) {
+                        updateEditSplitRemainder(splitContainer, parseFloat(tr.querySelector('.edit-amount').value) || 0);
+                    }
+                });
+
+                // --- Update remainder when main amount changes while in split mode ---
+                tr.querySelector('.edit-amount').addEventListener('input', () => {
+                    if (isSplitMode) {
+                        updateEditSplitRemainder(splitContainer, parseFloat(tr.querySelector('.edit-amount').value) || 0);
+                    }
+                });
 
                 tr.querySelector('.cancelExpenseBtn').addEventListener('click', () => { tr.innerHTML = originalHtml; });
                 tr.querySelector('.saveExpenseBtn').addEventListener('click', async (ev) => {
@@ -1255,19 +1321,80 @@ document.addEventListener('DOMContentLoaded', async () => {
                             btn.disabled = false;
                             return;
                         }
-                        // Convert local date input to UTC for storage
+
                         const newDateUTC = localDateToUTC(newDateLocal);
-                        await updateExpense(id, {
-                            date: newDateUTC,
-                            currency: newCurrency.trim().toUpperCase(),
-                            method: newMethod.trim().toLowerCase(),
-                            categoryId: newCategoryId,
-                            description: newDesc.trim(),
-                            amountLocal: newAmount,
-                            photoFile,
-                            removePhoto
-                        });
-                        await render();
+
+                        if (isSplitMode) {
+                            // --- Split save: delete original, create N new expenses ---
+                            const splits = getEditSplitsFromContainer(splitContainer);
+                            if (!splits.length) {
+                                alert('Add at least one split row with a category and amount.');
+                                btn.disabled = false;
+                                return;
+                            }
+                            if (!validateEditSplits(splitContainer, splits, Number(newAmount))) {
+                                btn.disabled = false;
+                                return;
+                            }
+
+                            // Preserve photo from original expense for the first split
+                            const origPhoto = await getPhoto(id);
+
+                            // Delete the original expense
+                            await deleteExpense(id);
+
+                            // Create one expense per split
+                            let isFirst = true;
+                            for (const split of splits) {
+                                const splitDesc = splits.length > 1
+                                    ? `${newDesc.trim()} [split ${split.amount.toFixed(2)}]`
+                                    : newDesc.trim();
+
+                                await addExpense({
+                                    date: newDateUTC,
+                                    currency: newCurrency.trim().toUpperCase(),
+                                    method: newMethod.trim().toLowerCase(),
+                                    categoryId: split.categoryId,
+                                    description: splitDesc,
+                                    amountLocal: split.amount.toFixed(2),
+                                    photoFile: null // handle photo separately below
+                                });
+
+                                // Attach original photo to first split expense
+                                if (isFirst && origPhoto && !removePhoto) {
+                                    const allExps = await indexGetAllKey('expenses', 'byTrip', getActiveTripId());
+                                    const newest = allExps.sort((a, b) => (b.id > a.id ? 1 : -1))[0];
+                                    if (newest) await savePhoto(newest.id, origPhoto.dataUrl);
+                                }
+                                isFirst = false;
+                            }
+
+                            // If a new photo was uploaded, attach it to the first split
+                            if (photoFile) {
+                                try {
+                                    const dataUrl = await readAndResizePhoto(photoFile);
+                                    const allExps = await indexGetAllKey('expenses', 'byTrip', getActiveTripId());
+                                    const newest = allExps.sort((a, b) => (b.id > a.id ? 1 : -1))[0];
+                                    if (newest) await savePhoto(newest.id, dataUrl);
+                                } catch { /* non-fatal */ }
+                            }
+
+                            showToast(`Split into ${splits.length} expenses ✓`);
+                            await render();
+                        } else {
+                            // --- Normal (non-split) save ---
+                            await updateExpense(id, {
+                                date: newDateUTC,
+                                currency: newCurrency.trim().toUpperCase(),
+                                method: newMethod.trim().toLowerCase(),
+                                categoryId: newCategoryId,
+                                description: newDesc.trim(),
+                                amountLocal: newAmount,
+                                photoFile,
+                                removePhoto
+                            });
+                            await render();
+                        }
                     } catch (err) {
                         alert('Save failed: ' + (err.message || err));
                         btn.disabled = false;
@@ -1476,7 +1603,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const fileEl = document.getElementById('importFile');
         const file = fileEl.files && fileEl.files[0];
         if (!file) { alert('Select a JSON backup file to import.'); return; }
-        try { await importBackupFile(file); } catch (err) { alert(err.message || err); }
+        try { await importBackupFile(file); } catch (err) { alert(err.message); }
     });
     document.getElementById('importFile').addEventListener('change', (e) => {
         document.getElementById('importFileName').textContent = e.target.files[0]?.name || '';
@@ -1533,6 +1660,74 @@ function createSplitRowHtml(categories, selectedCategoryId = '', amount = '') {
         <input class="split-amount" type="number" step="0.01" min="0" placeholder="0.00" value="${amount}" style="width:7rem;" />
         <button type="button" class="removeSplitRow btn btn-ghost btn-sm" title="Remove">✕</button>
     </div>`;
+}
+
+/** Split row HTML scoped to a specific container (for inline edit — avoids conflicting with the Add form's split rows). */
+function createEditSplitRowHtml(categories, selectedCategoryId = '', amount = '') {
+    const options = categories.map(c =>
+        `<option value="${c.id}"${c.id === selectedCategoryId ? ' selected' : ''}>${c.name}</option>`
+    ).join('');
+    return `<div class="edit-split-row" style="display:flex;gap:.5rem;align-items:center;margin-bottom:.35rem;">
+        <select class="edit-split-category">${options}</select>
+        <input class="edit-split-amount" type="number" step="0.01" min="0" placeholder="0.00" value="${amount}" style="width:7rem;" />
+        <button type="button" class="removeEditSplitRow btn btn-ghost btn-sm" title="Remove">✕</button>
+    </div>`;
+}
+
+function getEditSplitTotal(container) {
+    let total = 0;
+    for (const input of container.querySelectorAll('.edit-split-amount')) {
+        const val = parseFloat(input.value);
+        if (!isNaN(val)) total += val;
+    }
+    return Math.round(total * 100) / 100;
+}
+
+function updateEditSplitRemainder(container, totalAmount) {
+    const splitTotal = getEditSplitTotal(container);
+    const remainder = Math.round((totalAmount - splitTotal) * 100) / 100;
+    const el = container.querySelector('.edit-split-remainder');
+    const warning = container.querySelector('.edit-split-warning');
+
+    if (el) {
+        el.textContent = `Remaining: ${remainder.toFixed(2)}`;
+        el.style.color = remainder < 0 ? 'var(--color-danger, #c00)' : remainder === 0 ? 'var(--color-success, #090)' : '';
+    }
+    if (warning) {
+        if (remainder < 0) {
+            warning.textContent = `Splits exceed total by ${Math.abs(remainder).toFixed(2)}`;
+        } else if (remainder > 0) {
+            warning.textContent = `${remainder.toFixed(2)} still unassigned`;
+        } else {
+            warning.textContent = '';
+        }
+    }
+    return remainder;
+}
+
+function getEditSplitsFromContainer(container) {
+    const rows = container.querySelectorAll('.edit-split-row');
+    const splits = [];
+    for (const row of rows) {
+        const categoryId = row.querySelector('.edit-split-category').value;
+        const amount = parseFloat(row.querySelector('.edit-split-amount').value);
+        if (categoryId && !isNaN(amount) && amount > 0) {
+            splits.push({ categoryId, amount });
+        }
+    }
+    return splits;
+}
+
+function validateEditSplits(container, splits, totalAmount) {
+    const splitTotal = splits.reduce((sum, s) => sum + s.amount, 0);
+    const diff = Math.round(Math.abs(totalAmount - splitTotal) * 100) / 100;
+    const warning = container.querySelector('.edit-split-warning');
+    if (diff > 0.01) {
+        if (warning) warning.textContent = `Split total (${splitTotal.toFixed(2)}) ≠ expense amount (${totalAmount.toFixed(2)}). Difference: ${diff.toFixed(2)}`;
+        return false;
+    }
+    if (warning) warning.textContent = '';
+    return true;
 }
 
 function getSplitTotal() {
