@@ -139,6 +139,24 @@ function getOcrLangs(tripCurrencies, homeCurrency) {
 function parseReceipt(ocrText) {
     const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
 
+    // --- Store / merchant name extraction ---
+    // Receipts typically have the store name in the first few non-empty lines,
+    // before any date, item, or monetary value appears.
+    const moneyOrDateRe = /[\$€£¥]|\d{1,7}[.,]\d{2}|\d{2}[-/.]\d{2}[-/.]\d{2,4}|\d{4}[-/.]\d{2}[-/.]\d{2}/;
+    const noiseRe = /^(tel|phone|fax|www\.|http|address|receipt|tax\s|vat|gst|abn|pos\b|terminal|cashier|server|welcome|thank|gracias|merci|danke)/i;
+    let storeName = null;
+    for (const line of lines.slice(0, 5)) {
+        // Skip lines that look like numbers, money, dates, or common receipt noise
+        if (moneyOrDateRe.test(line)) break;
+        if (noiseRe.test(line)) continue;
+        // A plausible store name: at least 3 characters, mostly letters/spaces
+        const cleaned = line.replace(/[^a-zA-Z\u00C0-\u024F\u0400-\u04FF\u3000-\u9FFF\s'&.-]/g, '').trim();
+        if (cleaned.length >= 3) {
+            storeName = cleaned;
+            break;
+        }
+    }
+
     // --- Date extraction ---
     const datePatterns = [
         /(\d{4}[-/.]\d{2}[-/.]\d{2})/,           // 2025-06-15
@@ -204,6 +222,7 @@ function parseReceipt(ocrText) {
     return {
         date: isoDate || null,
         total: totalAmount || largestAmount || null,
+        storeName: storeName || null,
     };
 }
 
@@ -998,6 +1017,227 @@ function setOcrStatus(state, text) {
     if (text) textEl.textContent = text;
 }
 
+// ---------- Excel Export ----------
+async function exportToExcel() {
+    if (typeof XLSX === 'undefined') {
+        alert('Excel library (SheetJS) not loaded. Check your internet connection.');
+        return;
+    }
+
+    try {
+        const settings = await loadSettings();
+        const trips = await listTrips();
+        const currentTrip = trips.find(t => t.id === activeTripId);
+        const tripName = currentTrip?.name || 'Trip';
+        const cats = await listCategories();
+        const catMap = new Map(cats.map(c => [c.id, c.name]));
+
+        // Respect current filters
+        const startDateLocal = $('#startDate').value || null;
+        const endDateLocal = $('#endDate').value || null;
+        const startDate = localDateToUTC(startDateLocal);
+        const endDate = localDateToUTC(endDateLocal);
+        const displayCurrency = ($('#summaryCurrency').value || settings.homeCurrency).toUpperCase();
+
+        const expenses = (await getExpensesInRange(startDate, endDate))
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        if (!expenses.length) {
+            alert('No expenses to export for the selected date range.');
+            return;
+        }
+
+        const wb = XLSX.utils.book_new();
+
+        // ── Sheet 1: All Expenses ──
+        const expRows = expenses.map(e => ({
+            'Date': utcDateToLocal(e.date),
+            'Category': catMap.get(e.categoryId) || '(Unknown)',
+            'Method': e.method.toUpperCase(),
+            'Currency': e.currency,
+            'Local Amount': e.amountLocalCents / 100,
+            'FX Rate': e.fxRatePpm ? e.fxRatePpm / PPM : null,
+            'FX Source': e.fxSource || '',
+            [`Home Amount (${settings.homeCurrency})`]: e.baseAmountCents != null ? e.baseAmountCents / 100 : null,
+            'Description': e.description || ''
+        }));
+
+        const wsExpenses = XLSX.utils.json_to_sheet(expRows);
+
+        // Set column widths
+        wsExpenses['!cols'] = [
+            { wch: 12 }, // Date
+            { wch: 16 }, // Category
+            { wch: 10 }, // Method
+            { wch: 10 }, // Currency
+            { wch: 14 }, // Local Amount
+            { wch: 12 }, // FX Rate
+            { wch: 12 }, // FX Source
+            { wch: 18 }, // Home Amount
+            { wch: 30 }, // Description
+        ];
+
+        // Format number columns
+        const numRows = expRows.length;
+        for (let r = 1; r <= numRows; r++) {
+            const localCell = wsExpenses[XLSX.utils.encode_cell({ r, c: 4 })];
+            if (localCell) localCell.z = '#,##0.00';
+            const rateCell = wsExpenses[XLSX.utils.encode_cell({ r, c: 5 })];
+            if (rateCell) rateCell.z = '0.0000';
+            const homeCell = wsExpenses[XLSX.utils.encode_cell({ r, c: 7 })];
+            if (homeCell) homeCell.z = '#,##0.00';
+        }
+
+        XLSX.utils.book_append_sheet(wb, wsExpenses, 'Expenses');
+
+        // ── Sheet 2: Category Summary ──
+        const catAgg = new Map();
+        for (const e of expenses) {
+            const agg = catAgg.get(e.categoryId) || { name: catMap.get(e.categoryId) || '(Unknown)', count: 0, baseCents: 0 };
+            agg.count += 1;
+            agg.baseCents += (e.baseAmountCents || 0);
+            catAgg.set(e.categoryId, agg);
+        }
+
+        const catRows = [];
+        let grandTotal = 0;
+        for (const [, { name, count, baseCents }] of catAgg) {
+            const displayCents = await convertBaseToTargetCents(baseCents, displayCurrency, endDate);
+            catRows.push({
+                'Category': name,
+                'Count': count,
+                [`Total (${displayCurrency})`]: displayCents / 100
+            });
+            grandTotal += displayCents;
+        }
+        // Sort by total descending
+        catRows.sort((a, b) => b[`Total (${displayCurrency})`] - a[`Total (${displayCurrency})`]);
+        // Grand total row
+        catRows.push({
+            'Category': 'GRAND TOTAL',
+            'Count': expenses.length,
+            [`Total (${displayCurrency})`]: grandTotal / 100
+        });
+
+        const wsCatSummary = XLSX.utils.json_to_sheet(catRows);
+        wsCatSummary['!cols'] = [{ wch: 20 }, { wch: 8 }, { wch: 18 }];
+        for (let r = 1; r <= catRows.length; r++) {
+            const cell = wsCatSummary[XLSX.utils.encode_cell({ r, c: 2 })];
+            if (cell) cell.z = '#,##0.00';
+        }
+        XLSX.utils.book_append_sheet(wb, wsCatSummary, 'By Category');
+
+        // ── Sheet 3: Daily Summary ──
+        const dailyMap = new Map();
+        for (const e of expenses) {
+            const day = utcDateToLocal(e.date);
+            const agg = dailyMap.get(day) || { count: 0, baseCents: 0 };
+            agg.count += 1;
+            agg.baseCents += (e.baseAmountCents || 0);
+            dailyMap.set(day, agg);
+        }
+        const dailyRows = [];
+        for (const [day, { count, baseCents }] of [...dailyMap.entries()].sort()) {
+            const displayCents = await convertBaseToTargetCents(baseCents, displayCurrency, endDate);
+            dailyRows.push({
+                'Date': day,
+                'Count': count,
+                [`Total (${displayCurrency})`]: displayCents / 100
+            });
+        }
+        const wsDaily = XLSX.utils.json_to_sheet(dailyRows);
+        wsDaily['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 18 }];
+        for (let r = 1; r <= dailyRows.length; r++) {
+            const cell = wsDaily[XLSX.utils.encode_cell({ r, c: 2 })];
+            if (cell) cell.z = '#,##0.00';
+        }
+        XLSX.utils.book_append_sheet(wb, wsDaily, 'Daily Summary');
+
+        // ── Sheet 4: Payment Method Summary ──
+        const methodMap = new Map();
+        for (const e of expenses) {
+            const m = e.method.toUpperCase();
+            const agg = methodMap.get(m) || { count: 0, baseCents: 0 };
+            agg.count += 1;
+            agg.baseCents += (e.baseAmountCents || 0);
+            methodMap.set(m, agg);
+        }
+        const methodRows = [];
+        for (const [method, { count, baseCents }] of methodMap) {
+            const displayCents = await convertBaseToTargetCents(baseCents, displayCurrency, endDate);
+            methodRows.push({
+                'Method': method,
+                'Count': count,
+                [`Total (${displayCurrency})`]: displayCents / 100
+            });
+        }
+        const wsMethod = XLSX.utils.json_to_sheet(methodRows);
+        wsMethod['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 18 }];
+        for (let r = 1; r <= methodRows.length; r++) {
+            const cell = wsMethod[XLSX.utils.encode_cell({ r, c: 2 })];
+            if (cell) cell.z = '#,##0.00';
+        }
+        XLSX.utils.book_append_sheet(wb, wsMethod, 'By Method');
+
+        // ── Sheet 5: Currency Summary ──
+        const curMap = new Map();
+        for (const e of expenses) {
+            const agg = curMap.get(e.currency) || { count: 0, localCents: 0, baseCents: 0 };
+            agg.count += 1;
+            agg.localCents += (e.amountLocalCents || 0);
+            agg.baseCents += (e.baseAmountCents || 0);
+            curMap.set(e.currency, agg);
+        }
+        const curRows = [];
+        for (const [currency, { count, localCents, baseCents }] of curMap) {
+            const displayCents = await convertBaseToTargetCents(baseCents, displayCurrency, endDate);
+            curRows.push({
+                'Currency': currency,
+                'Count': count,
+                'Local Total': localCents / 100,
+                [`Home Total (${displayCurrency})`]: displayCents / 100
+            });
+        }
+        const wsCurrency = XLSX.utils.json_to_sheet(curRows);
+        wsCurrency['!cols'] = [{ wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 18 }];
+        for (let r = 1; r <= curRows.length; r++) {
+            const localCell = wsCurrency[XLSX.utils.encode_cell({ r, c: 2 })];
+            if (localCell) localCell.z = '#,##0.00';
+            const homeCell = wsCurrency[XLSX.utils.encode_cell({ r, c: 3 })];
+            if (homeCell) homeCell.z = '#,##0.00';
+        }
+        XLSX.utils.book_append_sheet(wb, wsCurrency, 'By Currency');
+
+        // ── Sheet 6: Trip Info ──
+        const totalBaseCents = await sumBaseCents(expenses);
+        const totalDisplayCents = await convertBaseToTargetCents(totalBaseCents, displayCurrency, endDate);
+        const infoData = [
+            ['Trip Name', tripName],
+            ['Home Currency', settings.homeCurrency],
+            ['Trip Currencies', (settings.tripCurrencies || []).join(', ')],
+            ['CC Fee %', settings.ccFeePercent],
+            ['Display Currency', displayCurrency],
+            ['Date Range', `${startDateLocal || '(all)'} — ${endDateLocal || '(all)'}`],
+            ['Total Expenses', expenses.length],
+            ['Grand Total', totalDisplayCents / 100],
+            ['Exported At', new Date().toLocaleString()],
+        ];
+        const wsInfo = XLSX.utils.aoa_to_sheet(infoData);
+        wsInfo['!cols'] = [{ wch: 18 }, { wch: 30 }];
+        const totalCell = wsInfo[XLSX.utils.encode_cell({ r: 7, c: 1 })];
+        if (totalCell) totalCell.z = '#,##0.00';
+        XLSX.utils.book_append_sheet(wb, wsInfo, 'Trip Info');
+
+        // ── Download ──
+        const safeTrip = tripName.replace(/[^a-zA-Z0-9_-]/g, '_').substring(0, 30);
+        const filename = `${safeTrip}-expenses-${todayLocal()}.xlsx`;
+        XLSX.writeFile(wb, filename);
+        showToast('Excel exported ✓');
+    } catch (err) {
+        alert('Excel export failed: ' + (err.message || err));
+    }
+}
+
 // ---------- Event handlers ----------
 document.addEventListener('DOMContentLoaded', async () => {
     initTabs();
@@ -1023,7 +1263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             preview.innerHTML = '<span class="muted">Preview failed</span>';
         }
 
-        // Run OCR in background
+                // Run OCR in background
         if (typeof Tesseract !== 'undefined') {
             try {
                 setOcrStatus('scanning', 'Scanning receipt…');
@@ -1041,6 +1281,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (parsed.total) {
                     document.getElementById('amount').value = parsed.total.toFixed(2);
                     filled.push('amount');
+                }
+                if (parsed.storeName) {
+                    const descEl = document.getElementById('description');
+                    // Only auto-fill if the description is currently empty
+                    if (!descEl.value.trim()) {
+                        descEl.value = parsed.storeName;
+                        filled.push('store name');
+                    }
                 }
 
                 if (filled.length) {
@@ -1596,6 +1844,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Display currency change
     document.getElementById('summaryCurrency').addEventListener('change', render);
+
+    // Excel export
+    document.getElementById('exportExcelBtn').addEventListener('click', exportToExcel);
 
     // Backup/Restore handlers
     document.getElementById('exportBackupBtn').addEventListener('click', exportBackup);
