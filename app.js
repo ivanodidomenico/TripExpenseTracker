@@ -496,6 +496,8 @@ async function addExpense({ date, currency, method, categoryId, description, amo
             await savePhoto(expenseId, dataUrl);
         } catch { /* non-fatal */ }
     }
+
+    return expenseId;
 }
 
 async function updateExpense(id, { date, currency, method, categoryId, description, amountLocal, photoFile, removePhoto }) {
@@ -1337,46 +1339,44 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 return;
                             }
 
-                            // Preserve photo from original expense for the first split
+                            // Preserve photo from original expense before deleting
                             const origPhoto = await getPhoto(id);
 
-                            // Delete the original expense
+                            // Delete the original expense (also deletes its photo from DB)
                             await deleteExpense(id);
 
-                            // Create one expense per split
-                            let isFirst = true;
+                            // Create one expense per split, track the first ID for photo
+                            let firstSplitId = null;
                             for (const split of splits) {
                                 const splitDesc = splits.length > 1
-                                    ? `${newDesc.trim()} [split ${split.amount.toFixed(2)}]`
+                                    ? `[split ${Number(newAmount).toFixed(2)}] ${newDesc.trim()}`
                                     : newDesc.trim();
 
-                                await addExpense({
+                                const newId = await addExpense({
                                     date: newDateUTC,
                                     currency: newCurrency.trim().toUpperCase(),
                                     method: newMethod.trim().toLowerCase(),
                                     categoryId: split.categoryId,
                                     description: splitDesc,
                                     amountLocal: split.amount.toFixed(2),
-                                    photoFile: null // handle photo separately below
+                                    photoFile: null
                                 });
 
-                                // Attach original photo to first split expense
-                                if (isFirst && origPhoto && !removePhoto) {
-                                    const allExps = await indexGetAllKey('expenses', 'byTrip', getActiveTripId());
-                                    const newest = allExps.sort((a, b) => (b.id > a.id ? 1 : -1))[0];
-                                    if (newest) await savePhoto(newest.id, origPhoto.dataUrl);
-                                }
-                                isFirst = false;
+                                if (!firstSplitId) firstSplitId = newId;
                             }
 
-                            // If a new photo was uploaded, attach it to the first split
-                            if (photoFile) {
-                                try {
-                                    const dataUrl = await readAndResizePhoto(photoFile);
-                                    const allExps = await indexGetAllKey('expenses', 'byTrip', getActiveTripId());
-                                    const newest = allExps.sort((a, b) => (b.id > a.id ? 1 : -1))[0];
-                                    if (newest) await savePhoto(newest.id, dataUrl);
-                                } catch { /* non-fatal */ }
+                            // Attach photo to the first split expense
+                            if (firstSplitId) {
+                                if (photoFile) {
+                                    // New photo uploaded — use it
+                                    try {
+                                        const dataUrl = await readAndResizePhoto(photoFile);
+                                        await savePhoto(firstSplitId, dataUrl);
+                                    } catch { /* non-fatal */ }
+                                } else if (origPhoto && !removePhoto) {
+                                    // Carry over the original photo
+                                    await savePhoto(firstSplitId, origPhoto.dataUrl);
+                                }
                             }
 
                             showToast(`Split into ${splits.length} expenses ✓`);
@@ -1561,7 +1561,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         method,
                         categoryId: split.categoryId,
                         description: splits.length > 1
-                            ? `${description} [split ${split.amount.toFixed(2)}]`
+                            ? `[split ${Number(amountLocal).toFixed(2)}] ${description}`
                             : description,
                         amountLocal: split.amount.toFixed(2),
                         photoFile: isFirst ? photoFile : null
