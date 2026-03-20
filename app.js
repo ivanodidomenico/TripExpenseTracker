@@ -1958,7 +1958,133 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateOnlineStatus();
     window.addEventListener('online', updateOnlineStatus);
     window.addEventListener('offline', updateOnlineStatus);
+
+    // ---------- Onboarding wizard ----------
+    const OB_KEY = 'tripx_onboarding_done';
+
+    function isOnboardingDone() {
+        return localStorage.getItem(OB_KEY) === '1';
+    }
+
+    function markOnboardingDone() {
+        localStorage.setItem(OB_KEY, '1');
+    }
+
+    function showOnboardingStep(step) {
+        document.querySelectorAll('.onboarding-step').forEach(el => el.classList.remove('active'));
+        document.getElementById(`onboardingStep${step}`).classList.add('active');
+        document.querySelectorAll('.ob-dot').forEach(dot => {
+            dot.classList.toggle('active', Number(dot.dataset.step) <= step);
+        });
+    }
+
+    if (!isOnboardingDone()) {
+        const overlay = document.getElementById('onboardingOverlay');
+        overlay.hidden = false;
+
+        // Step 1 → 2
+        document.getElementById('obNext1').addEventListener('click', () => {
+            const name = document.getElementById('obTripName').value.trim();
+            if (!name) { document.getElementById('obTripName').focus(); return; }
+            showOnboardingStep(2);
+        });
+
+        // Step 2 → 3
+        document.getElementById('obNext2').addEventListener('click', () => {
+            const home = document.getElementById('obHomeCurrency').value.trim().toUpperCase();
+            if (!home) { document.getElementById('obHomeCurrency').focus(); return; }
+            showOnboardingStep(3);
+        });
+
+        // Step 3 → 4
+        document.getElementById('obNext3').addEventListener('click', () => showOnboardingStep(4));
+
+        // Back buttons
+        document.getElementById('obBack2').addEventListener('click', () => showOnboardingStep(1));
+        document.getElementById('obBack3').addEventListener('click', () => showOnboardingStep(2));
+        document.getElementById('obBack4').addEventListener('click', () => showOnboardingStep(3));
+
+        // Category badges: click to toggle removal
+        document.getElementById('obCategoryList').addEventListener('click', (e) => {
+            if (e.target.classList.contains('badge')) {
+                e.target.classList.toggle('ob-removed');
+            }
+        });
+
+        // Add custom category
+        document.getElementById('obAddCategory').addEventListener('click', () => {
+            const input = document.getElementById('obNewCategory');
+            const name = input.value.trim();
+            if (!name) return;
+            const list = document.getElementById('obCategoryList');
+            const existing = [...list.querySelectorAll('.badge')].map(b => b.textContent.toLowerCase());
+            if (existing.includes(name.toLowerCase())) { input.value = ''; return; }
+            const badge = document.createElement('span');
+            badge.className = 'badge';
+            badge.textContent = name;
+            list.appendChild(badge);
+            input.value = '';
+        });
+
+        // Skip
+        document.getElementById('obSkip').addEventListener('click', () => {
+            markOnboardingDone();
+            overlay.hidden = true;
+        });
+
+        // Finish: apply onboarding data
+        document.getElementById('obFinish').addEventListener('click', async () => {
+            try {
+                const tripName = document.getElementById('obTripName').value.trim() || 'My Trip';
+                const homeCurrency = document.getElementById('obHomeCurrency').value.trim().toUpperCase() || 'CAD';
+                const tripCurrencies = document.getElementById('obTripCurrencies').value
+                    .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+                const ccFee = Number(document.getElementById('obCcFee').value) || 2.5;
+
+                // Get selected categories (not removed)
+                const categoryBadges = document.querySelectorAll('#obCategoryList .badge:not(.ob-removed)');
+                const categoryNames = [...categoryBadges].map(b => b.textContent.trim()).filter(Boolean);
+
+                // Rename the default trip
+                const trips = await listTrips();
+                const currentTrip = trips.find(t => t.id === activeTripId);
+                if (currentTrip && tripName !== currentTrip.name) {
+                    await renameTrip(activeTripId, tripName);
+                }
+
+                // Save settings
+                await put('settings', {
+                    id: settingsKey(),
+                    homeCurrency,
+                    tripCurrencies: tripCurrencies.length ? tripCurrencies : [homeCurrency],
+                    ccFeePercent: ccFee,
+                });
+
+                // Replace default categories with wizard selections
+                const existingCats = await listCategories();
+                for (const c of existingCats) {
+                    await deleteCategoryIfUnused(c.id);
+                }
+                for (const name of categoryNames) {
+                    await put('categories', { id: crypto.randomUUID(), name, tripId: getActiveTripId() });
+                }
+                // Ensure at least one category
+                const finalCats = await listCategories();
+                if (!finalCats.length) {
+                    await put('categories', { id: crypto.randomUUID(), name: 'Meals', tripId: getActiveTripId() });
+                }
+
+                markOnboardingDone();
+                overlay.hidden = true;
+                showToast('Trip setup complete! 🎉', 'success', 3000);
+                await render();
+            } catch (err) {
+                alert('Setup failed: ' + (err.message || err));
+            }
+        });
+    }
 });
+
 
 // ---------- Split helpers ----------
 

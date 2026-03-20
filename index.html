@@ -289,6 +289,79 @@
     <!-- Toast notification -->
     <div id="toast" class="toast" aria-live="polite"></div>
 
+    <!-- Onboarding wizard overlay (add before the closing </body> tag, above the script tag) -->
+    <div id="onboardingOverlay" class="onboarding-overlay" hidden>
+        <div class="onboarding-card">
+            <div id="onboardingStep1" class="onboarding-step active">
+                <h2>✈️ Welcome to TripX!</h2>
+                <p>Let's set up your first trip in a few quick steps.</p>
+                <div class="form-group">
+                    <label for="obTripName">Trip Name</label>
+                    <input id="obTripName" type="text" placeholder="e.g., Europe 2026" required />
+                </div>
+                <div class="onboarding-actions">
+                    <button type="button" class="btn btn-ghost" id="obSkip">Skip setup</button>
+                    <button type="button" class="btn btn-primary" id="obNext1">Next →</button>
+                </div>
+            </div>
+            <div id="onboardingStep2" class="onboarding-step">
+                <h2>💱 Currencies</h2>
+                <p>What's your home currency and which currencies will you use on this trip?</p>
+                <div class="form-group">
+                    <label for="obHomeCurrency">Home Currency</label>
+                    <input id="obHomeCurrency" type="text" placeholder="CAD" value="CAD" required />
+                </div>
+                <div class="form-group">
+                    <label for="obTripCurrencies">Trip Currencies (comma-separated)</label>
+                    <input id="obTripCurrencies" type="text" placeholder="EUR, GBP" required />
+                </div>
+                <div class="onboarding-actions">
+                    <button type="button" class="btn btn-ghost" id="obBack2">← Back</button>
+                    <button type="button" class="btn btn-primary" id="obNext2">Next →</button>
+                </div>
+            </div>
+            <div id="onboardingStep3" class="onboarding-step">
+                <h2>🏷️ Categories</h2>
+                <p>Add spending categories for your trip. You can always add more later.</p>
+                <div class="form-group">
+                    <div id="obCategoryList" class="onboarding-category-list">
+                        <span class="badge">Meals</span>
+                        <span class="badge">Transport</span>
+                        <span class="badge">Lodging</span>
+                        <span class="badge">Activities</span>
+                        <span class="badge">Shopping</span>
+                    </div>
+                </div>
+                <div class="form-group" style="flex-direction:row; gap:.5rem;">
+                    <input id="obNewCategory" type="text" placeholder="Add custom category…" style="flex:1;" />
+                    <button type="button" class="btn btn-outline btn-sm" id="obAddCategory">+ Add</button>
+                </div>
+                <div class="onboarding-actions">
+                    <button type="button" class="btn btn-ghost" id="obBack3">← Back</button>
+                    <button type="button" class="btn btn-primary" id="obNext3">Next →</button>
+                </div>
+            </div>
+            <div id="onboardingStep4" class="onboarding-step">
+                <h2>💳 Credit Card Fee</h2>
+                <p>Enter your card's foreign transaction fee. This is applied to credit card expenses automatically.</p>
+                <div class="form-group">
+                    <label for="obCcFee">Fee (%)</label>
+                    <input id="obCcFee" type="number" step="0.1" min="0" value="2.5" required />
+                </div>
+                <div class="onboarding-actions">
+                    <button type="button" class="btn btn-ghost" id="obBack4">← Back</button>
+                    <button type="button" class="btn btn-primary btn-lg" id="obFinish">🚀 Start Tracking!</button>
+                </div>
+            </div>
+            <div class="onboarding-progress">
+                <span class="ob-dot active" data-step="1"></span>
+                <span class="ob-dot" data-step="2"></span>
+                <span class="ob-dot" data-step="3"></span>
+                <span class="ob-dot" data-step="4"></span>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="app.js"></script>
 </body>
 </html>
