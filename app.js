@@ -2166,24 +2166,33 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function positionTourTooltip(targetEl, tooltipEl) {
         const rect = targetEl.getBoundingClientRect();
-        const tooltipRect = tooltipEl.getBoundingClientRect();
         const pad = 12;
+
+        // Reset position so we can measure natural size
+        tooltipEl.style.top = '0px';
+        tooltipEl.style.left = '0px';
+        const tooltipRect = tooltipEl.getBoundingClientRect();
+
         let top, left;
+        const spaceBelow = window.innerHeight - rect.bottom - pad;
+        const spaceAbove = rect.top - pad;
 
-        // Prefer below the target
-        top = rect.bottom + pad;
-        left = rect.left + rect.width / 2 - tooltipRect.width / 2;
-
-        // If below goes off-screen, place above
-        if (top + tooltipRect.height > window.innerHeight - pad) {
-            top = rect.top - tooltipRect.height - pad;
-        }
-        // If above goes off-screen, place below anyway and let it scroll
-        if (top < pad) {
+        if (spaceBelow >= tooltipRect.height + pad) {
+            // Fits below
             top = rect.bottom + pad;
+        } else if (spaceAbove >= tooltipRect.height + pad) {
+            // Fits above
+            top = rect.top - tooltipRect.height - pad;
+        } else {
+            // Doesn't fit above or below — pin to bottom of viewport with margin
+            top = window.innerHeight - tooltipRect.height - pad;
         }
 
-        // Clamp horizontally
+        // Clamp vertically so tooltip never goes off-screen
+        top = Math.max(pad, Math.min(top, window.innerHeight - tooltipRect.height - pad));
+
+        // Center horizontally relative to target, then clamp
+        left = rect.left + rect.width / 2 - tooltipRect.width / 2;
         left = Math.max(pad, Math.min(left, window.innerWidth - tooltipRect.width - pad));
 
         tooltipEl.style.top = `${top}px`;
@@ -2214,6 +2223,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Switch page if needed
         if (step.page) switchToPage(step.page);
 
+        // Hide overlay during transition to prevent stale positioning
+        overlay.hidden = true;
+
         // Small delay to let page render before measuring
         requestAnimationFrame(() => {
             const targetEl = document.querySelector(step.target);
@@ -2223,7 +2235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            // Scroll target into view
+            // Scroll target into view first
             targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
             setTimeout(() => {
@@ -2247,11 +2259,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 // Last step: change button text
                 nextBtn.textContent = index === TOUR_STEPS.length - 1 ? 'Finish ✓' : 'Next →';
 
-                // Position tooltip
-                positionTourTooltip(targetEl, tooltip);
-
+                // Show overlay before positioning so tooltip has dimensions
                 overlay.hidden = false;
-            }, 300);
+
+                // Position tooltip (needs overlay visible for measurement)
+                positionTourTooltip(targetEl, tooltip);
+            }, 350);
         });
     }
 
