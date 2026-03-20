@@ -1,9 +1,12 @@
 export const DB_NAME = 'tripx';
-export const DB_VERSION = 4;
+export const DB_VERSION = 5;
 
 function openDB() {
     return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, DB_VERSION);
+        req.onblocked = () => {
+            alert('Database update blocked — please close other TripX tabs and reload.');
+        };
         req.onupgradeneeded = () => {
             const db = req.result;
 
@@ -24,10 +27,12 @@ function openDB() {
                 const s = db.createObjectStore('cashBatches', { keyPath: 'id' });
                 if (!s.indexNames.contains('byDate')) s.createIndex('byDate', 'date');
                 if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+                if (!s.indexNames.contains('byCurrency')) s.createIndex('byCurrency', 'currency');
             } else {
                 const s = req.transaction.objectStore('cashBatches');
                 if (!s.indexNames.contains('byDate')) s.createIndex('byDate', 'date');
                 if (!s.indexNames.contains('byTrip')) s.createIndex('byTrip', 'tripId');
+                if (!s.indexNames.contains('byCurrency')) s.createIndex('byCurrency', 'currency');
             }
 
             if (!db.objectStoreNames.contains('fxRates')) {
@@ -66,6 +71,50 @@ function openDB() {
                 }
             } catch (err) {
                 // swallow any errors during cleanup so upgrade still completes
+            }
+
+            // Migrate cashBatches: compute remainingCents from actual expense usage
+            try {
+                const txn = req.transaction;
+                const hasExpenses = txn.objectStoreNames.contains('expenses');
+                const hasBatches = txn.objectStoreNames.contains('cashBatches');
+                if (hasBatches && hasExpenses) {
+                    const expStore = txn.objectStore('expenses');
+                    const batchStore = txn.objectStore('cashBatches');
+
+                    // First pass: read all expenses to tally usage per cashBatchId
+                    const expReq = expStore.getAll();
+                    expReq.onsuccess = () => {
+                        const expenses = expReq.result || [];
+                        // Sum amountLocalCents spent per batch
+                        const usageMap = new Map();
+                        for (const e of expenses) {
+                            if (e.cashBatchId && e.method === 'cash') {
+                                usageMap.set(
+                                    e.cashBatchId,
+                                    (usageMap.get(e.cashBatchId) || 0) + (e.amountLocalCents || 0)
+                                );
+                            }
+                        }
+
+                        // Second pass: update each batch with correct remainingCents
+                        const cursorReq = batchStore.openCursor();
+                        cursorReq.onsuccess = () => {
+                            const cursor = cursorReq.result;
+                            if (cursor) {
+                                const batch = cursor.value;
+                                if (batch.remainingCents === undefined) {
+                                    const spent = usageMap.get(batch.id) || 0;
+                                    batch.remainingCents = Math.max(0, batch.purchasedAmountCents - spent);
+                                    cursor.update(batch);
+                                }
+                                cursor.continue();
+                            }
+                        };
+                    };
+                }
+            } catch (err) {
+                // swallow migration errors so upgrade still completes
             }
         };
         req.onsuccess = () => resolve(req.result);

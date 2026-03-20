@@ -231,7 +231,7 @@
         </div>
 
         <div class="box card-elevated">
-            <h2>💰 Cash Batches</h2>
+            <h2>💰 Cash Batches <span class="badge" style="background:#e0f0ff;color:#036;font-size:.75rem;vertical-align:middle;">shared across all trips</span></h2>
             <form id="cashForm">
                 <div class="form-group">
                     <label for="cashDate">Date bought</label>
@@ -254,6 +254,7 @@
                 </div>
             </form>
             <ul id="cashBatchesList" class="cash-list"></ul>
+            <div class="muted">Cash batches are shared across all trips. Any trip's cash expenses will deduct from the matching batch's remaining balance. Deleting a trip will not remove its cash batches.</div>
         </div>
 
         <!-- Backup & Restore -->

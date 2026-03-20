@@ -140,16 +140,12 @@ function parseReceipt(ocrText) {
     const lines = ocrText.split('\n').map(l => l.trim()).filter(Boolean);
 
     // --- Store / merchant name extraction ---
-    // Receipts typically have the store name in the first few non-empty lines,
-    // before any date, item, or monetary value appears.
     const moneyOrDateRe = /[\$€£¥]|\d{1,7}[.,]\d{2}|\d{2}[-/.]\d{2}[-/.]\d{2,4}|\d{4}[-/.]\d{2}[-/.]\d{2}/;
     const noiseRe = /^(tel|phone|fax|www\.|http|address|receipt|tax\s|vat|gst|abn|pos\b|terminal|cashier|server|welcome|thank|gracias|merci|danke)/i;
     let storeName = null;
     for (const line of lines.slice(0, 5)) {
-        // Skip lines that look like numbers, money, dates, or common receipt noise
         if (moneyOrDateRe.test(line)) break;
         if (noiseRe.test(line)) continue;
-        // A plausible store name: at least 3 characters, mostly letters/spaces
         const cleaned = line.replace(/[^a-zA-Z\u00C0-\u024F\u0400-\u04FF\u3000-\u9FFF\s'&.-]/g, '').trim();
         if (cleaned.length >= 3) {
             storeName = cleaned;
@@ -159,9 +155,9 @@ function parseReceipt(ocrText) {
 
     // --- Date extraction ---
     const datePatterns = [
-        /(\d{4}[-/.]\d{2}[-/.]\d{2})/,           // 2025-06-15
-        /(\d{2}[-/.]\d{2}[-/.]\d{4})/,           // 15/06/2025 or 06-15-2025
-        /(\d{2}[-/.]\d{2}[-/.]\d{2})(?!\d)/,     // 15/06/25 (short year)
+        /(\d{4}[-/.]\d{2}[-/.]\d{2})/,
+        /(\d{2}[-/.]\d{2}[-/.]\d{4})/,
+        /(\d{2}[-/.]\d{2}[-/.]\d{2})(?!\d)/,
     ];
     let dateMatch = null;
     for (const line of lines) {
@@ -172,7 +168,6 @@ function parseReceipt(ocrText) {
         if (dateMatch) break;
     }
 
-    // Attempt to normalise the matched date into YYYY-MM-DD
     let isoDate = null;
     if (dateMatch) {
         const cleaned = dateMatch.replace(/[/.]/g, '-');
@@ -180,18 +175,14 @@ function parseReceipt(ocrText) {
         if (parts.length === 3) {
             let [a, b, c] = parts;
             if (a.length === 4) {
-                // YYYY-MM-DD
                 isoDate = `${a}-${b.padStart(2, '0')}-${c.padStart(2, '0')}`;
             } else if (c.length === 4) {
-                // DD-MM-YYYY or MM-DD-YYYY — assume DD-MM-YYYY (most common outside US)
                 isoDate = `${c}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`;
             } else if (c.length === 2) {
-                // DD-MM-YY
                 const year = Number(c) > 50 ? `19${c}` : `20${c}`;
                 isoDate = `${year}-${b.padStart(2, '0')}-${a.padStart(2, '0')}`;
             }
         }
-        // Validate the result is a real date
         if (isoDate && isNaN(Date.parse(isoDate))) isoDate = null;
     }
 
@@ -201,7 +192,6 @@ function parseReceipt(ocrText) {
     let largestAmount = 0;
 
     for (const line of lines) {
-        // Prioritise lines with "total" keyword (skip "subtotal")
         const isTotal = /\btotal\b/i.test(line) && !/\bsub\s?total\b/i.test(line);
         if (isTotal) {
             const m = line.match(moneyPattern);
@@ -210,7 +200,6 @@ function parseReceipt(ocrText) {
                 if (val > 0) totalAmount = val;
             }
         }
-        // Track largest amount as fallback
         let match;
         const scanPattern = /[\$€£¥]?\s?(\d{1,7}[.,]\d{2})\b/g;
         while ((match = scanPattern.exec(line)) !== null) {
@@ -230,7 +219,6 @@ function parseReceipt(ocrText) {
 let ocrWorker = null;
 
 async function runOcr(file, langs) {
-    // Use the global Tesseract loaded from CDN
     if (typeof Tesseract === 'undefined') {
         throw new Error('Tesseract.js not loaded');
     }
@@ -297,13 +285,14 @@ async function createTrip(name) {
 async function deleteTrip(tripId) {
     const expenses = await indexGetAllKey('expenses', 'byTrip', tripId);
     for (const e of expenses) {
+        // Restore cash batch remaining balance before deleting
+        await restoreCashBatchBalance(e);
         await deletePhoto(e.id);
         await del('expenses', e.id);
     }
     const categories = await indexGetAllKey('categories', 'byTrip', tripId);
     for (const c of categories) await del('categories', c.id);
-    const cashBatches = await indexGetAllKey('cashBatches', 'byTrip', tripId);
-    for (const b of cashBatches) await del('cashBatches', b.id);
+    // Cash batches are global — do NOT delete them when a trip is deleted
     await del('settings', `trip:${tripId}`);
     await del('trips', tripId);
 }
@@ -417,30 +406,79 @@ async function getOrFetchRate(dateStr, currency) {
     return null;
 }
 
-// ---------- Cash Batches ----------
+// ---------- Cash Batches (GLOBAL — available to all trips) ----------
+
+/** List ALL cash batches across all trips. */
+async function listAllCashBatches() {
+    return await getAll('cashBatches');
+}
+
 async function addCashBatch({ date, currency, rateStr, purchasedAmount }) {
+    const purchasedAmountCents = toCents(purchasedAmount);
     await put('cashBatches', {
         id: crypto.randomUUID(),
         tripId: getActiveTripId(),
         date,
         currency: currency.toUpperCase(),
         ratePpm: rateToPpm(rateStr),
-        purchasedAmountCents: toCents(purchasedAmount),
+        purchasedAmountCents,
+        remainingCents: purchasedAmountCents,
         note: ''
     });
 }
 
+/**
+ * Pick the best cash batch for a given date and currency.
+ * Searches ALL batches globally (not just current trip).
+ * Only considers batches with remaining balance > 0 and date <= expense date.
+ * Prefers the most recent batch by date, then the one with the most remaining balance.
+ */
 async function pickCashBatchFor(dateStr, currency) {
-    const batches = await indexGetAllKey('cashBatches', 'byTrip', getActiveTripId());
+    const batches = await listAllCashBatches();
     const d = new Date(dateStr).getTime();
-    const candidates = batches.filter(b => b.currency === currency.toUpperCase() && new Date(b.date).getTime() <= d);
-    candidates.sort((a, b) => new Date(b.date) - new Date(a.date));
+    const candidates = batches.filter(b =>
+        b.currency === currency.toUpperCase() &&
+        new Date(b.date).getTime() <= d &&
+        (b.remainingCents === undefined || b.remainingCents > 0)
+    );
+    candidates.sort((a, b) => {
+        const dateDiff = new Date(b.date) - new Date(a.date);
+        if (dateDiff !== 0) return dateDiff;
+        return (b.remainingCents ?? b.purchasedAmountCents) - (a.remainingCents ?? a.purchasedAmountCents);
+    });
     return candidates[0] || null;
 }
 
+/** Deduct an amount from a cash batch's remaining balance. */
+async function deductCashBatch(batchId, amountCents) {
+    const batch = await get('cashBatches', batchId);
+    if (!batch) return;
+    if (batch.remainingCents === undefined) {
+        batch.remainingCents = batch.purchasedAmountCents;
+    }
+    batch.remainingCents = Math.max(0, batch.remainingCents - amountCents);
+    await put('cashBatches', batch);
+}
+
+/** Restore an amount to a cash batch's remaining balance (on expense delete/update). */
+async function restoreCashBatchBalance(expense) {
+    if (!expense.cashBatchId || expense.method !== 'cash') return;
+    const batch = await get('cashBatches', expense.cashBatchId);
+    if (!batch) return;
+    if (batch.remainingCents === undefined) {
+        batch.remainingCents = batch.purchasedAmountCents;
+    }
+    batch.remainingCents = Math.min(
+        batch.purchasedAmountCents,
+        batch.remainingCents + expense.amountLocalCents
+    );
+    await put('cashBatches', batch);
+}
+
 async function deleteCashBatch(batchId) {
-    const exps = await indexGetAllKey('expenses', 'byTrip', getActiveTripId());
-    const used = exps.some(e => e.cashBatchId === batchId);
+    // Check ALL expenses across ALL trips, not just the current one
+    const allExpenses = await getAll('expenses');
+    const used = allExpenses.some(e => e.cashBatchId === batchId);
     if (used) return false;
     await del('cashBatches', batchId);
     return true;
@@ -465,11 +503,17 @@ async function addExpense({ date, currency, method, categoryId, description, amo
             cashBatchId = null;
         } else {
             const batch = await pickCashBatchFor(date, currency);
-            if (!batch) throw new Error(`No cash batch found for ${currency} on or before ${utcDateToLocal(date)}. Add a cash batch first.`);
+            if (!batch) throw new Error(`No cash batch found for ${currency} on or before ${utcDateToLocal(date)} with sufficient balance. Add a cash batch first.`);
+            const remaining = batch.remainingCents ?? batch.purchasedAmountCents;
+            if (remaining < amountLocalCents) {
+                throw new Error(`Insufficient cash batch balance for ${currency}. Needed: ${fromCents(amountLocalCents)}, available: ${fromCents(remaining)}. Add more cash or use a different batch.`);
+            }
             cashBatchId = batch.id;
             fxRatePpm = batch.ratePpm;
             fxSource = 'cashBatch';
             baseAmountCents = Math.round(amountLocalCents * batch.ratePpm / PPM);
+            // Deduct from the batch
+            await deductCashBatch(batch.id, amountLocalCents);
         }
     } else {
         let result = await getOrFetchRate(date, currency);
@@ -523,6 +567,9 @@ async function updateExpense(id, { date, currency, method, categoryId, descripti
     const exp = await get('expenses', id);
     if (!exp) throw new Error('Expense not found.');
 
+    // Restore old cash batch balance before recalculating
+    await restoreCashBatchBalance(exp);
+
     exp.date = date;
     exp.currency = currency.toUpperCase();
     exp.method = method;
@@ -544,11 +591,17 @@ async function updateExpense(id, { date, currency, method, categoryId, descripti
             cashBatchId = null;
         } else {
             const batch = await pickCashBatchFor(date, exp.currency);
-            if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${utcDateToLocal(date)}. Add a cash batch first.`);
+            if (!batch) throw new Error(`No cash batch found for ${exp.currency} on or before ${utcDateToLocal(date)} with sufficient balance. Add a cash batch first.`);
+            const remaining = batch.remainingCents ?? batch.purchasedAmountCents;
+            if (remaining < exp.amountLocalCents) {
+                throw new Error(`Insufficient cash batch balance for ${exp.currency}. Needed: ${fromCents(exp.amountLocalCents)}, available: ${fromCents(remaining)}.`);
+            }
             cashBatchId = batch.id;
             fxRatePpm = batch.ratePpm;
             fxSource = 'cashBatch';
             baseAmountCents = Math.round(exp.amountLocalCents * batch.ratePpm / PPM);
+            // Deduct from the batch
+            await deductCashBatch(batch.id, exp.amountLocalCents);
         }
     } else {
         let result = await getOrFetchRate(date, exp.currency);
@@ -593,6 +646,11 @@ async function updateExpense(id, { date, currency, method, categoryId, descripti
 }
 
 async function deleteExpense(id) {
+    const exp = await get('expenses', id);
+    if (exp) {
+        // Restore cash batch remaining balance
+        await restoreCashBatchBalance(exp);
+    }
     await deletePhoto(id);
     await del('expenses', id);
 }
@@ -752,10 +810,21 @@ async function render() {
     cashCurrencyEl.innerHTML = allDisplayCurrencies.map(c => `<option value="${c}">${c}</option>`).join('');
     cashCurrencyEl.value = allDisplayCurrencies.includes(prevCash) ? prevCash : allDisplayCurrencies[0];
 
-    const batches = await indexGetAllKey('cashBatches', 'byTrip', getActiveTripId());
-    $('#cashBatchesList').innerHTML = batches
+    // Cash batches are GLOBAL — show all batches from all trips with remaining balance
+    const allBatches = await listAllCashBatches();
+    const trips = await listTrips();
+    const tripMap = new Map(trips.map(t => [t.id, t.name]));
+
+    $('#cashBatchesList').innerHTML = allBatches
         .sort((a, b) => new Date(b.date) - new Date(a.date))
-        .map(b => `<li data-id="${b.id}">${utcDateToLocal(b.date)} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${(b.purchasedAmountCents / 100).toFixed(2)} <span class="actions"><button class="editCashBtn" type="button">Edit</button> <button class="deleteCashBtn" type="button">Delete</button></span></li>`)
+        .map(b => {
+            const remaining = b.remainingCents ?? b.purchasedAmountCents;
+            const purchased = b.purchasedAmountCents;
+            const pctUsed = purchased > 0 ? Math.round((1 - remaining / purchased) * 100) : 0;
+            const tripName = tripMap.get(b.tripId) || '(deleted trip)';
+            const balanceClass = remaining <= 0 ? 'style="opacity:.5;"' : '';
+            return `<li data-id="${b.id}" ${balanceClass}>${utcDateToLocal(b.date)} • ${b.currency} • rate ${(b.ratePpm / PPM).toFixed(4)} • ${fromCents(purchased)} purchased • <strong>${fromCents(remaining)} remaining</strong> (${pctUsed}% used) • <em class="muted">${tripName}</em> <span class="actions"><button class="editCashBtn" type="button">Edit</button> <button class="deleteCashBtn" type="button">Delete</button></span></li>`;
+        })
         .join('');
 
     const summaryEl = document.getElementById('summaryCurrency');
@@ -917,12 +986,10 @@ async function importBackupFile(file) {
     };
 
     // Stores that must always be wiped in wipe-mode, even if absent from the backup.
-    // This prevents orphaned records when importing older backups that lack newer stores.
     const alwaysWipeStores = ['photos'];
 
     try {
         if (wipe) {
-            // Wipe stores present in the backup
             for (const s of storeNames) {
                 const existing = await getAll(s);
                 for (const item of existing) {
@@ -930,9 +997,8 @@ async function importBackupFile(file) {
                     if (key != null) await del(s, key);
                 }
             }
-            // Wipe stores not in the backup but required for consistency
             for (const s of alwaysWipeStores) {
-                if (storeNames.includes(s)) continue; // already handled above
+                if (storeNames.includes(s)) continue;
                 try {
                     const existing = await getAll(s);
                     for (const item of existing) {
@@ -945,6 +1011,27 @@ async function importBackupFile(file) {
 
         for (const s of storeNames) {
             for (const it of parsed.stores[s]) await put(s, it);
+        }
+
+        // Migrate imported cashBatches: compute remainingCents from expense data
+        if (parsed.stores['cashBatches']?.length) {
+            const importedExpenses = parsed.stores['expenses'] || [];
+            const usageMap = new Map();
+            for (const e of importedExpenses) {
+                if (e.cashBatchId && e.method === 'cash') {
+                    usageMap.set(
+                        e.cashBatchId,
+                        (usageMap.get(e.cashBatchId) || 0) + (e.amountLocalCents || 0)
+                    );
+                }
+            }
+            for (const batch of parsed.stores['cashBatches']) {
+                if (batch.remainingCents === undefined) {
+                    const spent = usageMap.get(batch.id) || 0;
+                    batch.remainingCents = Math.max(0, batch.purchasedAmountCents - spent);
+                    await put('cashBatches', batch);
+                }
+            }
         }
 
         const importedTrips = parsed.stores['trips'] || [];
@@ -1064,20 +1151,11 @@ async function exportToExcel() {
 
         const wsExpenses = XLSX.utils.json_to_sheet(expRows);
 
-        // Set column widths
         wsExpenses['!cols'] = [
-            { wch: 12 }, // Date
-            { wch: 16 }, // Category
-            { wch: 10 }, // Method
-            { wch: 10 }, // Currency
-            { wch: 14 }, // Local Amount
-            { wch: 12 }, // FX Rate
-            { wch: 12 }, // FX Source
-            { wch: 18 }, // Home Amount
-            { wch: 30 }, // Description
+            { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 10 },
+            { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }, { wch: 30 },
         ];
 
-        // Format number columns
         const numRows = expRows.length;
         for (let r = 1; r <= numRows; r++) {
             const localCell = wsExpenses[XLSX.utils.encode_cell({ r, c: 4 })];
@@ -1110,9 +1188,7 @@ async function exportToExcel() {
             });
             grandTotal += displayCents;
         }
-        // Sort by total descending
         catRows.sort((a, b) => b[`Total (${displayCurrency})`] - a[`Total (${displayCurrency})`]);
-        // Grand total row
         catRows.push({
             'Category': 'GRAND TOTAL',
             'Count': expenses.length,
@@ -1263,7 +1339,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             preview.innerHTML = '<span class="muted">Preview failed</span>';
         }
 
-                // Run OCR in background
+        // Run OCR in background
         if (typeof Tesseract !== 'undefined') {
             try {
                 setOcrStatus('scanning', 'Scanning receipt…');
@@ -1274,7 +1350,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 let filled = [];
                 if (parsed.date) {
-                    // OCR dates are local (from the receipt), show as-is in the local date input
                     document.getElementById('date').value = parsed.date;
                     filled.push('date');
                 }
@@ -1284,7 +1359,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 if (parsed.storeName) {
                     const descEl = document.getElementById('description');
-                    // Only auto-fill if the description is currently empty
                     if (!descEl.value.trim()) {
                         descEl.value = parsed.storeName;
                         filled.push('store name');
@@ -1353,7 +1427,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const trips = await listTrips();
         if (trips.length <= 1) { alert('You must have at least one trip.'); return; }
         const current = trips.find(t => t.id === activeTripId);
-        if (!confirm(`Delete trip "${current?.name}" and ALL its expenses, categories, and cash batches? This cannot be undone.`)) return;
+        if (!confirm(`Delete trip "${current?.name}" and ALL its expenses and categories? Cash batches are shared and will be kept. This cannot be undone.`)) return;
         await deleteTrip(activeTripId);
         const remaining = await listTrips();
         activeTripId = remaining[0].id;
@@ -1464,7 +1538,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                        <label style="font-size:.78rem;"><input class="edit-remove-photo" type="checkbox" /> Remove</label>`
                     : `<input class="edit-photo" type="file" accept="image/*" style="width:7rem;" />`;
 
-                // Show the stored UTC date as a local date in the editor
                 const localDate = utcDateToLocal(exp.date);
 
                 tr.innerHTML = `
@@ -1502,7 +1575,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const splitRowsEl = tr.querySelector('.edit-split-rows');
                 let isSplitMode = false;
 
-                // --- Toggle into split mode ---
                 tr.querySelector('.editSplitBtn').addEventListener('click', () => {
                     isSplitMode = true;
                     tr.querySelector('.edit-cat-normal').hidden = true;
@@ -1513,7 +1585,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     updateEditSplitRemainder(splitContainer, parseFloat(currentAmount) || 0);
                 });
 
-                // --- Cancel split mode ---
                 tr.querySelector('.cancelEditSplit').addEventListener('click', () => {
                     isSplitMode = false;
                     splitContainer.hidden = true;
@@ -1521,7 +1592,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     splitRowsEl.innerHTML = '';
                 });
 
-                // --- Add split row ---
                 tr.querySelector('.addEditSplitRow').addEventListener('click', () => {
                     const totalAmount = parseFloat(tr.querySelector('.edit-amount').value) || 0;
                     const splitTotal = getEditSplitTotal(splitContainer);
@@ -1530,7 +1600,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     updateEditSplitRemainder(splitContainer, totalAmount);
                 });
 
-                // --- Remove split row + live amount updates ---
                 splitContainer.addEventListener('click', (ev) => {
                     if (ev.target.classList.contains('removeEditSplitRow')) {
                         ev.target.closest('.edit-split-row').remove();
@@ -1543,7 +1612,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     }
                 });
 
-                // --- Update remainder when main amount changes while in split mode ---
                 tr.querySelector('.edit-amount').addEventListener('input', () => {
                     if (isSplitMode) {
                         updateEditSplitRemainder(splitContainer, parseFloat(tr.querySelector('.edit-amount').value) || 0);
@@ -1575,7 +1643,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const newDateUTC = localDateToUTC(newDateLocal);
 
                         if (isSplitMode) {
-                            // --- Split save: delete original, create N new expenses ---
                             const splits = getEditSplitsFromContainer(splitContainer);
                             if (!splits.length) {
                                 alert('Add at least one split row with a category and amount.');
@@ -1587,13 +1654,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 return;
                             }
 
-                            // Preserve photo from original expense before deleting
                             const origPhoto = await getPhoto(id);
 
-                            // Delete the original expense (also deletes its photo from DB)
                             await deleteExpense(id);
 
-                            // Create one expense per split, track the first ID for photo
                             let firstSplitId = null;
                             for (const split of splits) {
                                 const splitDesc = splits.length > 1
@@ -1613,16 +1677,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                                 if (!firstSplitId) firstSplitId = newId;
                             }
 
-                            // Attach photo to the first split expense
                             if (firstSplitId) {
                                 if (photoFile) {
-                                    // New photo uploaded — use it
                                     try {
                                         const dataUrl = await readAndResizePhoto(photoFile);
                                         await savePhoto(firstSplitId, dataUrl);
                                     } catch { /* non-fatal */ }
                                 } else if (origPhoto && !removePhoto) {
-                                    // Carry over the original photo
                                     await savePhoto(firstSplitId, origPhoto.dataUrl);
                                 }
                             }
@@ -1630,7 +1691,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                             showToast(`Split into ${splits.length} expenses ✓`);
                             await render();
                         } else {
-                            // --- Normal (non-split) save ---
                             await updateExpense(id, {
                                 date: newDateUTC,
                                 currency: newCurrency.trim().toUpperCase(),
@@ -1661,7 +1721,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const currency = document.getElementById('cashCurrency').value.trim().toUpperCase();
         const rateStr = document.getElementById('cashRate').value;
         const purchased = document.getElementById('cashAmount').value;
-        // Convert local date input to UTC for storage
         await addCashBatch({ date: localDateToUTC(dateLocal), currency, rateStr, purchasedAmount: purchased });
         e.target.reset();
         document.getElementById('cashDate').value = todayLocal();
@@ -1677,7 +1736,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (e.target.classList.contains('deleteCashBtn')) {
             if (!confirm('Delete this cash batch?')) return;
             const ok = await deleteCashBatch(id);
-            if (!ok) { alert('Cannot delete this cash batch — one or more expenses reference it. Reassign or delete those expenses first.'); return; }
+            if (!ok) { alert('Cannot delete this cash batch — one or more expenses across trips reference it. Reassign or delete those expenses first.'); return; }
             await render();
             return;
         }
@@ -1689,7 +1748,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const allCurrencies = Array.from(new Set([settings.homeCurrency, ...(settings.tripCurrencies || [])]));
                 const originalHtml = li.innerHTML;
                 const currencyOptions = allCurrencies.map(c => `<option value="${c}"${c === batch.currency ? ' selected' : ''}>${c}</option>`).join('');
-                // Show stored UTC date as local in the editor
                 const localDate = utcDateToLocal(batch.date);
                 li.innerHTML = `
                     <div class="cash-edit-scroll" style="overflow-x:auto;">
@@ -1718,11 +1776,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                             btn.disabled = false;
                             return;
                         }
-                        // Convert local date input to UTC for storage
+                        const newPurchasedCents = toCents(newAmount);
+                        const oldPurchasedCents = batch.purchasedAmountCents;
+                        const oldRemaining = batch.remainingCents ?? oldPurchasedCents;
+                        // Adjust remaining proportionally: remaining += (newPurchased - oldPurchased)
+                        const newRemaining = Math.max(0, oldRemaining + (newPurchasedCents - oldPurchasedCents));
+
                         batch.date = localDateToUTC(newDateLocal);
                         batch.currency = newCurrency.trim().toUpperCase();
                         batch.ratePpm = rateToPpm(newRate);
-                        batch.purchasedAmountCents = toCents(newAmount);
+                        batch.purchasedAmountCents = newPurchasedCents;
+                        batch.remainingCents = Math.min(newPurchasedCents, newRemaining);
                         await put('cashBatches', batch);
                         await render();
                     } catch (err) {
@@ -1759,7 +1823,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateSplitRemainder();
     });
 
-    // Live update remainder when any split amount changes or a row is removed
     document.getElementById('splitRows').addEventListener('input', (e) => {
         if (e.target.classList.contains('split-amount')) updateSplitRemainder();
     });
@@ -1771,7 +1834,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    // Update remainder when the main amount field changes while split is active
     document.getElementById('amount').addEventListener('input', () => {
         if (document.getElementById('splitToggle').checked) updateSplitRemainder();
     });
@@ -1800,7 +1862,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 if (!validateSplits(splits, Number(amountLocal))) return;
 
-                // Create one expense per split line
                 let isFirst = true;
                 for (const split of splits) {
                     await addExpense({
@@ -1881,7 +1942,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Register SW (as module to support import) and handle updates
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('./sw.js', { type: 'module' }).then(reg => {
-            // Check for updates every 30 minutes
             setInterval(() => reg.update(), 30 * 60 * 1000);
         });
 
@@ -1913,7 +1973,6 @@ function createSplitRowHtml(categories, selectedCategoryId = '', amount = '') {
     </div>`;
 }
 
-/** Split row HTML scoped to a specific container (for inline edit — avoids conflicting with the Add form's split rows). */
 function createEditSplitRowHtml(categories, selectedCategoryId = '', amount = '') {
     const options = categories.map(c =>
         `<option value="${c.id}"${c.id === selectedCategoryId ? ' selected' : ''}>${c.name}</option>`
