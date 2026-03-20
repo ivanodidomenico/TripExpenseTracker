@@ -1947,10 +1947,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         navigator.serviceWorker.addEventListener('message', (event) => {
             if (event.data?.type === 'SW_UPDATED') {
-                showToast(`Updated to v${event.data.version}! Tap to reload.`, 'success', 8000);
+                showToast(`Updated to v${event.data.version}! Tap to reload.`, 'success', 0);
                 const toast = document.getElementById('toast');
                 toast.style.cursor = 'pointer';
-                toast.addEventListener('click', () => window.location.reload(), { once: true });
+                const reloadHandler = () => {
+                    toast.removeEventListener('click', reloadHandler);
+                    window.location.reload();
+                };
+                toast.addEventListener('click', reloadHandler);
             }
         });
     }
