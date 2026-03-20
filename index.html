@@ -271,6 +271,15 @@
             </div>
             <div class="muted">Export creates a JSON file with all your data. Import will merge or replace existing data.</div>
         </div>
+        
+        <!-- Guided Tour -->
+        <div class="box card-elevated">
+            <h2>🎓 Guided Tour</h2>
+            <div class="flex" style="align-items:center;">
+                <button id="startTourBtn" type="button" class="btn btn-outline">🎓 Take a Tour</button>
+                <span class="muted">Walk through the key features of TripX.</span>
+            </div>
+        </div>
     </section>
 
     <!-- Photo lightbox overlay -->
@@ -358,6 +367,25 @@
                 <span class="ob-dot" data-step="2"></span>
                 <span class="ob-dot" data-step="3"></span>
                 <span class="ob-dot" data-step="4"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Guided tour spotlight overlay -->
+    <div id="tourOverlay" class="tour-overlay" hidden>
+        <div id="tourSpotlight" class="tour-spotlight"></div>
+        <div id="tourTooltip" class="tour-tooltip">
+            <div class="tour-tooltip-header">
+                <strong id="tourTitle"></strong>
+                <span id="tourCounter" class="tour-counter"></span>
+            </div>
+            <p id="tourBody"></p>
+            <div class="tour-tooltip-actions">
+                <button type="button" class="btn btn-ghost btn-sm" id="tourSkip">Skip tour</button>
+                <div style="display:flex;gap:.4rem;">
+                    <button type="button" class="btn btn-ghost btn-sm" id="tourPrev" hidden>← Back</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="tourNext">Next →</button>
+                </div>
             </div>
         </div>
     </div>

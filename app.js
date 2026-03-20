@@ -2078,11 +2078,220 @@ document.addEventListener('DOMContentLoaded', async () => {
                 overlay.hidden = true;
                 showToast('Trip setup complete! 🎉', 'success', 3000);
                 await render();
+                document.dispatchEvent(new Event('tourAutoStart'));
             } catch (err) {
                 alert('Setup failed: ' + (err.message || err));
             }
         });
     }
+
+    // ---------- Guided tour ----------
+    const TOUR_KEY = 'tripx_tour_done';
+
+    const TOUR_STEPS = [
+        {
+            target: '.trip-bar',
+            title: '📍 Trip Selector',
+            body: 'Switch between trips, create new ones, rename, or delete. Each trip has its own settings, categories, and expenses.',
+        },
+        {
+            target: '#fxRatesBar',
+            title: '💱 Live FX Rates',
+            body: 'Live exchange rates for your trip currencies, fetched from the Frankfurter API. These update automatically.',
+        },
+        {
+            target: '.tab-nav',
+            title: '🗂️ Navigation Tabs',
+            body: 'Three main sections: Add Expense for logging costs, Summary for reports and exports, and Settings for configuration.',
+        },
+        {
+            target: '#expensePhoto',
+            title: '📷 Receipt Scanner',
+            body: 'Snap or upload a receipt photo. OCR will auto-fill the date, amount, and store name. Works offline too!',
+            page: 'expense',
+        },
+        {
+            target: '#method',
+            title: '💳 Payment Method',
+            body: 'Credit applies your CC foreign transaction fee automatically. Cash uses your pre-loaded cash batch exchange rate.',
+            page: 'expense',
+        },
+        {
+            target: '#splitToggle',
+            title: '✂️ Split Expenses',
+            body: 'Toggle this to split a single receipt across multiple categories — great for mixed purchases.',
+            page: 'expense',
+        },
+        {
+            target: '.total-card',
+            title: '📊 Trip Total',
+            body: 'Your grand total converted to any display currency. Filter by date range and switch currencies on the fly.',
+            page: 'summary',
+        },
+        {
+            target: '#exportExcelBtn',
+            title: '📥 Excel Export',
+            body: 'Export a detailed Excel workbook with sheets for expenses, category breakdown, daily totals, and more.',
+            page: 'summary',
+        },
+        {
+            target: '#settingsForm',
+            title: '⚙️ Trip Settings',
+            body: 'Set your home currency, trip currencies, and credit card fee. Each trip can have different settings.',
+            page: 'settings',
+        },
+        {
+            target: '#cashForm',
+            title: '💰 Cash Batches',
+            body: 'Log foreign cash purchases at their actual exchange rate. Cash batches are shared across all trips and track remaining balances.',
+            page: 'settings',
+        },
+        {
+            target: '#exportBackupBtn',
+            title: '📦 Backup & Restore',
+            body: 'Export all your data as JSON for safekeeping. Import to restore or merge data across devices.',
+            page: 'settings',
+        },
+    ];
+
+    function switchToPage(pageName) {
+        if (!pageName) return;
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        const btn = document.querySelector(`.tab-btn[data-page="${pageName}"]`);
+        const page = document.getElementById(`page-${pageName}`);
+        if (btn) btn.classList.add('active');
+        if (page) page.classList.add('active');
+    }
+
+    function positionTourTooltip(targetEl, tooltipEl) {
+        const rect = targetEl.getBoundingClientRect();
+        const tooltipRect = tooltipEl.getBoundingClientRect();
+        const pad = 12;
+        let top, left;
+
+        // Prefer below the target
+        top = rect.bottom + pad;
+        left = rect.left + rect.width / 2 - tooltipRect.width / 2;
+
+        // If below goes off-screen, place above
+        if (top + tooltipRect.height > window.innerHeight - pad) {
+            top = rect.top - tooltipRect.height - pad;
+        }
+        // If above goes off-screen, place below anyway and let it scroll
+        if (top < pad) {
+            top = rect.bottom + pad;
+        }
+
+        // Clamp horizontally
+        left = Math.max(pad, Math.min(left, window.innerWidth - tooltipRect.width - pad));
+
+        tooltipEl.style.top = `${top}px`;
+        tooltipEl.style.left = `${left}px`;
+    }
+
+    function showTourStep(index) {
+        const overlay = document.getElementById('tourOverlay');
+        const spotlight = document.getElementById('tourSpotlight');
+        const tooltip = document.getElementById('tourTooltip');
+        const titleEl = document.getElementById('tourTitle');
+        const bodyEl = document.getElementById('tourBody');
+        const counterEl = document.getElementById('tourCounter');
+        const prevBtn = document.getElementById('tourPrev');
+        const nextBtn = document.getElementById('tourNext');
+
+        if (index < 0 || index >= TOUR_STEPS.length) {
+            // Tour complete
+            overlay.hidden = true;
+            spotlight.style.cssText = '';
+            localStorage.setItem(TOUR_KEY, '1');
+            showToast('Tour complete! 🎉', 'success', 2500);
+            return;
+        }
+
+        const step = TOUR_STEPS[index];
+
+        // Switch page if needed
+        if (step.page) switchToPage(step.page);
+
+        // Small delay to let page render before measuring
+        requestAnimationFrame(() => {
+            const targetEl = document.querySelector(step.target);
+            if (!targetEl) {
+                // Skip missing elements
+                showTourStep(index + 1);
+                return;
+            }
+
+            // Scroll target into view
+            targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+            setTimeout(() => {
+                const rect = targetEl.getBoundingClientRect();
+                const spotPad = 6;
+
+                // Position spotlight cutout
+                spotlight.style.top = `${rect.top - spotPad}px`;
+                spotlight.style.left = `${rect.left - spotPad}px`;
+                spotlight.style.width = `${rect.width + spotPad * 2}px`;
+                spotlight.style.height = `${rect.height + spotPad * 2}px`;
+
+                // Fill tooltip
+                titleEl.textContent = step.title;
+                bodyEl.textContent = step.body;
+                counterEl.textContent = `${index + 1} / ${TOUR_STEPS.length}`;
+
+                // Show/hide back button
+                prevBtn.hidden = index === 0;
+
+                // Last step: change button text
+                nextBtn.textContent = index === TOUR_STEPS.length - 1 ? 'Finish ✓' : 'Next →';
+
+                // Position tooltip
+                positionTourTooltip(targetEl, tooltip);
+
+                overlay.hidden = false;
+            }, 300);
+        });
+    }
+
+    let currentTourStep = 0;
+
+    function startTour() {
+        currentTourStep = 0;
+        showTourStep(0);
+    }
+
+    document.getElementById('tourNext').addEventListener('click', () => {
+        currentTourStep++;
+        showTourStep(currentTourStep);
+    });
+
+    document.getElementById('tourPrev').addEventListener('click', () => {
+        currentTourStep = Math.max(0, currentTourStep - 1);
+        showTourStep(currentTourStep);
+    });
+
+    document.getElementById('tourSkip').addEventListener('click', () => {
+        document.getElementById('tourOverlay').hidden = true;
+        localStorage.setItem(TOUR_KEY, '1');
+        showToast('Tour skipped — replay anytime from Settings.', 'success', 3000);
+    });
+
+    // "Take a Tour" button in Settings
+    document.getElementById('startTourBtn').addEventListener('click', () => {
+        // Switch to expense tab first so tour starts from the beginning
+        switchToPage('expense');
+        startTour();
+    });
+
+    // Auto-start tour after onboarding wizard finishes (not on skip)
+    // This hooks into the existing obFinish handler via a custom event
+    document.addEventListener('tourAutoStart', () => {
+        if (localStorage.getItem(TOUR_KEY) !== '1') {
+            setTimeout(() => startTour(), 500);
+        }
+    });
 });
 
 

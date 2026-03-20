@@ -864,3 +864,98 @@ textarea {
         font-size: 1.15rem;
     }
 }
+
+/* ===== Guided tour ===== */
+.tour-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10002;
+    pointer-events: none;
+}
+
+.tour-overlay[hidden] {
+    display: none;
+}
+
+.tour-overlay::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .45);
+    pointer-events: auto;
+}
+
+.tour-spotlight {
+    position: fixed;
+    border-radius: var(--radius-md);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+    background: transparent;
+    transition: top .35s ease, left .35s ease, width .35s ease, height .35s ease;
+    z-index: 10003;
+    pointer-events: none;
+}
+
+.tour-tooltip {
+    position: fixed;
+    z-index: 10004;
+    background: var(--color-surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 1.15rem 1.25rem 1rem;
+    max-width: 340px;
+    width: calc(100vw - 2rem);
+    pointer-events: auto;
+    animation: tourPop .25s ease;
+}
+
+@keyframes tourPop {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.tour-tooltip-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: .35rem;
+}
+
+.tour-tooltip-header strong {
+    font-size: 1rem;
+}
+
+.tour-counter {
+    font-size: .75rem;
+    color: var(--color-text-muted);
+    background: var(--color-primary-light);
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.tour-tooltip p {
+    color: var(--color-text-muted);
+    font-size: .88rem;
+    margin: 0 0 .85rem;
+    line-height: 1.5;
+}
+
+.tour-tooltip-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+@media (max-width: 600px) {
+    .tour-tooltip {
+        max-width: calc(100vw - 1.5rem);
+        padding: 1rem;
+    }
+}
