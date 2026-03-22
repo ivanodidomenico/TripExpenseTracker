@@ -1401,18 +1401,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     $('#newTripBtn').addEventListener('click', async () => {
-        const name = prompt('New trip name:');
-        if (!name || !name.trim()) return;
-        try {
-            const trip = await createTrip(name);
-            activeTripId = trip.id;
-            localStorage.setItem('activeTrip', activeTripId);
-            const settings = await loadSettings();
-            document.getElementById('currency').value = settings.tripCurrencies[0];
-            document.getElementById('cashCurrency').value = settings.tripCurrencies[0];
-            document.getElementById('summaryCurrency').value = settings.homeCurrency;
-            await render();
-        } catch (err) { alert(err.message); }
+        openOnboardingWizard('new');
     });
 
     $('#renameTripBtn').addEventListener('click', async () => {
@@ -1982,111 +1971,162 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    if (!isOnboardingDone()) {
-        const overlay = document.getElementById('onboardingOverlay');
-        overlay.hidden = false;
+    // Track whether the wizard is creating a new trip or setting up the initial one
+    let onboardingMode = 'initial'; // 'initial' or 'new'
 
-        // Step 1 → 2
-        document.getElementById('obNext1').addEventListener('click', () => {
-            const name = document.getElementById('obTripName').value.trim();
-            if (!name) { document.getElementById('obTripName').focus(); return; }
-            showOnboardingStep(2);
-        });
+    function resetOnboardingForm() {
+        document.getElementById('obTripName').value = '';
+        document.getElementById('obHomeCurrency').value = 'CAD';
+        document.getElementById('obTripCurrencies').value = '';
+        document.getElementById('obCcFee').value = '2.5';
+        document.getElementById('obNewCategory').value = '';
+        // Reset category badges to defaults
+        document.getElementById('obCategoryList').innerHTML =
+            '<span class="badge">Meals</span>' +
+            '<span class="badge">Transport</span>' +
+            '<span class="badge">Lodging</span>' +
+            '<span class="badge">Activities</span>' +
+            '<span class="badge">Shopping</span>';
+        showOnboardingStep(1);
+    }
 
-        // Step 2 → 3
-        document.getElementById('obNext2').addEventListener('click', () => {
-            const home = document.getElementById('obHomeCurrency').value.trim().toUpperCase();
-            if (!home) { document.getElementById('obHomeCurrency').focus(); return; }
-            showOnboardingStep(3);
-        });
+    function openOnboardingWizard(mode) {
+        onboardingMode = mode;
+        resetOnboardingForm();
 
-        // Step 3 → 4
-        document.getElementById('obNext3').addEventListener('click', () => showOnboardingStep(4));
+        // Pre-fill home currency from current settings when creating a new trip
+        if (mode === 'new') {
+            loadSettings().then(settings => {
+                document.getElementById('obHomeCurrency').value = settings.homeCurrency || 'CAD';
+            });
+        }
 
-        // Back buttons
-        document.getElementById('obBack2').addEventListener('click', () => showOnboardingStep(1));
-        document.getElementById('obBack3').addEventListener('click', () => showOnboardingStep(2));
-        document.getElementById('obBack4').addEventListener('click', () => showOnboardingStep(3));
+        document.getElementById('onboardingOverlay').hidden = false;
+    }
 
-        // Category badges: click to toggle removal
-        document.getElementById('obCategoryList').addEventListener('click', (e) => {
-            if (e.target.classList.contains('badge')) {
-                e.target.classList.toggle('ob-removed');
-            }
-        });
+    function closeOnboardingWizard() {
+        document.getElementById('onboardingOverlay').hidden = true;
+    }
 
-        // Add custom category
-        document.getElementById('obAddCategory').addEventListener('click', () => {
-            const input = document.getElementById('obNewCategory');
-            const name = input.value.trim();
-            if (!name) return;
-            const list = document.getElementById('obCategoryList');
-            const existing = [...list.querySelectorAll('.badge')].map(b => b.textContent.toLowerCase());
-            if (existing.includes(name.toLowerCase())) { input.value = ''; return; }
-            const badge = document.createElement('span');
-            badge.className = 'badge';
-            badge.textContent = name;
-            list.appendChild(badge);
-            input.value = '';
-        });
+    // Step 1 → 2
+    document.getElementById('obNext1').addEventListener('click', () => {
+        const name = document.getElementById('obTripName').value.trim();
+        if (!name) { document.getElementById('obTripName').focus(); return; }
+        showOnboardingStep(2);
+    });
 
-        // Skip
-        document.getElementById('obSkip').addEventListener('click', () => {
+    // Step 2 → 3
+    document.getElementById('obNext2').addEventListener('click', () => {
+        const home = document.getElementById('obHomeCurrency').value.trim().toUpperCase();
+        if (!home) { document.getElementById('obHomeCurrency').focus(); return; }
+        showOnboardingStep(3);
+    });
+
+    // Step 3 → 4
+    document.getElementById('obNext3').addEventListener('click', () => showOnboardingStep(4));
+
+    // Back buttons
+    document.getElementById('obBack2').addEventListener('click', () => showOnboardingStep(1));
+    document.getElementById('obBack3').addEventListener('click', () => showOnboardingStep(2));
+    document.getElementById('obBack4').addEventListener('click', () => showOnboardingStep(3));
+
+    // Category badges: click to toggle removal
+    document.getElementById('obCategoryList').addEventListener('click', (e) => {
+        if (e.target.classList.contains('badge')) {
+            e.target.classList.toggle('ob-removed');
+        }
+    });
+
+    // Add custom category
+    document.getElementById('obAddCategory').addEventListener('click', () => {
+        const input = document.getElementById('obNewCategory');
+        const name = input.value.trim();
+        if (!name) return;
+        const list = document.getElementById('obCategoryList');
+        const existing = [...list.querySelectorAll('.badge')].map(b => b.textContent.toLowerCase());
+        if (existing.includes(name.toLowerCase())) { input.value = ''; return; }
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = name;
+        list.appendChild(badge);
+        input.value = '';
+    });
+
+    // Skip
+    document.getElementById('obSkip').addEventListener('click', () => {
+        if (onboardingMode === 'initial') {
             markOnboardingDone();
-            overlay.hidden = true;
-        });
+        }
+        closeOnboardingWizard();
+    });
 
-        // Finish: apply onboarding data
-        document.getElementById('obFinish').addEventListener('click', async () => {
-            try {
-                const tripName = document.getElementById('obTripName').value.trim() || 'My Trip';
-                const homeCurrency = document.getElementById('obHomeCurrency').value.trim().toUpperCase() || 'CAD';
-                const tripCurrencies = document.getElementById('obTripCurrencies').value
-                    .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
-                const ccFee = Number(document.getElementById('obCcFee').value) || 2.5;
+    // Finish: apply onboarding data
+    document.getElementById('obFinish').addEventListener('click', async () => {
+        try {
+            const tripName = document.getElementById('obTripName').value.trim() || 'My Trip';
+            const homeCurrency = document.getElementById('obHomeCurrency').value.trim().toUpperCase() || 'CAD';
+            const tripCurrencies = document.getElementById('obTripCurrencies').value
+                .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+            const ccFee = Number(document.getElementById('obCcFee').value) || 2.5;
 
-                // Get selected categories (not removed)
-                const categoryBadges = document.querySelectorAll('#obCategoryList .badge:not(.ob-removed)');
-                const categoryNames = [...categoryBadges].map(b => b.textContent.trim()).filter(Boolean);
+            // Get selected categories (not removed)
+            const categoryBadges = document.querySelectorAll('#obCategoryList .badge:not(.ob-removed)');
+            const categoryNames = [...categoryBadges].map(b => b.textContent.trim()).filter(Boolean);
 
-                // Rename the default trip
+            if (onboardingMode === 'new') {
+                // Create a brand-new trip
+                const trip = await createTrip(tripName);
+                activeTripId = trip.id;
+                localStorage.setItem('activeTrip', activeTripId);
+            } else {
+                // Initial onboarding: rename the auto-created default trip
                 const trips = await listTrips();
                 const currentTrip = trips.find(t => t.id === activeTripId);
                 if (currentTrip && tripName !== currentTrip.name) {
                     await renameTrip(activeTripId, tripName);
                 }
-
-                // Save settings
-                await put('settings', {
-                    id: settingsKey(),
-                    homeCurrency,
-                    tripCurrencies: tripCurrencies.length ? tripCurrencies : [homeCurrency],
-                    ccFeePercent: ccFee,
-                });
-
-                // Replace default categories with wizard selections
-                const existingCats = await listCategories();
-                for (const c of existingCats) {
-                    await deleteCategoryIfUnused(c.id);
-                }
-                for (const name of categoryNames) {
-                    await put('categories', { id: crypto.randomUUID(), name, tripId: getActiveTripId() });
-                }
-                // Ensure at least one category
-                const finalCats = await listCategories();
-                if (!finalCats.length) {
-                    await put('categories', { id: crypto.randomUUID(), name: 'Meals', tripId: getActiveTripId() });
-                }
-
-                markOnboardingDone();
-                overlay.hidden = true;
-                showToast('Trip setup complete! 🎉', 'success', 3000);
-                await render();
-                document.dispatchEvent(new Event('tourAutoStart'));
-            } catch (err) {
-                alert('Setup failed: ' + (err.message || err));
             }
-        });
+
+            // Save settings for the (now active) trip
+            await put('settings', {
+                id: settingsKey(),
+                homeCurrency,
+                tripCurrencies: tripCurrencies.length ? tripCurrencies : [homeCurrency],
+                ccFeePercent: ccFee,
+            });
+
+            // Replace default categories with wizard selections
+            const existingCats = await listCategories();
+            for (const c of existingCats) {
+                await deleteCategoryIfUnused(c.id);
+            }
+            for (const name of categoryNames) {
+                await put('categories', { id: crypto.randomUUID(), name, tripId: getActiveTripId() });
+            }
+            // Ensure at least one category
+            const finalCats = await listCategories();
+            if (!finalCats.length) {
+                await put('categories', { id: crypto.randomUUID(), name: 'Meals', tripId: getActiveTripId() });
+            }
+
+            if (onboardingMode === 'initial') {
+                markOnboardingDone();
+            }
+            closeOnboardingWizard();
+            showToast('Trip setup complete! 🎉', 'success', 3000);
+            await render();
+
+            if (onboardingMode === 'initial') {
+                document.dispatchEvent(new Event('tourAutoStart'));
+            }
+        } catch (err) {
+            alert('Setup failed: ' + (err.message || err));
+        }
+    });
+
+    // Auto-open for first-time users
+    if (!isOnboardingDone()) {
+        openOnboardingWizard('initial');
     }
 
     // ---------- Guided tour ----------
