@@ -10,6 +10,48 @@ const rateToPpm = (rateStr) => Math.round(Number(rateStr) * PPM);
 const applyFeePpm = (ppm, feePercent) => Math.round(ppm * (1 + feePercent / 100));
 const $ = (sel) => document.querySelector(sel);
 
+// ---------- Theme management ----------
+const THEME_KEY = 'tripx_theme';
+
+function getStoredTheme() {
+    return localStorage.getItem(THEME_KEY) || 'system';
+}
+
+function applyTheme(preference) {
+    let effective;
+    if (preference === 'dark') {
+        effective = 'dark';
+    } else if (preference === 'light') {
+        effective = 'light';
+    } else {
+        effective = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', effective);
+
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = effective === 'dark' ? '#121212' : '#0b74de';
+}
+
+function setTheme(preference) {
+    localStorage.setItem(THEME_KEY, preference);
+    applyTheme(preference);
+    updateThemeToggleUI(preference);
+}
+
+function updateThemeToggleUI(preference) {
+    document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.themeValue === preference);
+    });
+}
+
+// Apply immediately to prevent flash of wrong theme
+applyTheme(getStoredTheme());
+
+// React to OS theme changes when in "system" mode
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (getStoredTheme() === 'system') applyTheme('system');
+});
+
 // ---------- Date helpers (UTC storage ↔ local display) ----------
 
 /** Returns today's date as a UTC YYYY-MM-DD string (for DB storage / FX lookups). */
@@ -1317,6 +1359,16 @@ async function exportToExcel() {
 // ---------- Event handlers ----------
 document.addEventListener('DOMContentLoaded', async () => {
     initTabs();
+
+    // --- Theme toggle ---
+    const storedTheme = getStoredTheme();
+    updateThemeToggleUI(storedTheme);
+    document.getElementById('themeToggle').addEventListener('click', (e) => {
+        const btn = e.target.closest('.theme-toggle-btn');
+        if (!btn) return;
+        setTheme(btn.dataset.themeValue);
+    });
+
     await ensureDefaults();
 
     document.getElementById('date').value = todayLocal();
