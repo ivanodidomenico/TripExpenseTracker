@@ -414,16 +414,15 @@ async function fetchAndCacheRate(dateStr, currency) {
         const from = currency.toUpperCase();
         if (from === to) {
             const effectiveDate = dateStr || todayUTC();
-            const ppm = PPM;
-            await upsertFxRate(effectiveDate, from, ppm);
-            return { ppm, source: 'identity' };
+            await upsertFxRate(effectiveDate, from, PPM);
+            return { ppm: PPM, source: 'identity' };
         }
-        const datePath = dateStr || 'latest';
-        const frankUrl = `https://api.frankfurter.dev/v2/${encodeURIComponent(datePath)}?base=${encodeURIComponent(from)}&symbols=${encodeURIComponent(to)}`;
+        let frankUrl = `https://api.frankfurter.dev/v2/rate/${encodeURIComponent(from)}/${encodeURIComponent(to)}`;
+        if (dateStr) frankUrl += `?date=${encodeURIComponent(dateStr)}`;
         const res = await fetch(frankUrl);
         if (!res.ok) return null;
         const data = await res.json();
-        const rate = (data.rates && data.rates[to]) ?? null;
+        const rate = data.rate ?? null;
         if (!rate) return null;
         const effectiveDate = data.date || dateStr;
         const ppm = rateToPpm(String(rate));
