@@ -419,7 +419,7 @@ async function fetchAndCacheRate(dateStr, currency) {
             return { ppm, source: 'identity' };
         }
         const datePath = dateStr || 'latest';
-        const frankUrl = `https://api.frankfurter.dev/v2/${encodeURIComponent(datePath)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+        const frankUrl = `https://api.frankfurter.dev/v2/${encodeURIComponent(datePath)}?base=${encodeURIComponent(from)}&symbols=${encodeURIComponent(to)}`;
         const res = await fetch(frankUrl);
         if (!res.ok) return null;
         const data = await res.json();
